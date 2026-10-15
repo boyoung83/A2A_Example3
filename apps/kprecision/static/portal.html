@@ -96,6 +96,12 @@ a{color:var(--accent)}
       <label class="conn" style="display:inline-flex"><input type="checkbox" id="hideTrack"> 배송 조회 숨기기</label></small></h2>
     <div class="body"><table id="reqs"></table></div>
   </section>
+
+  <section class="wide">
+    <h2>사내 시스템 키 <small>구매 에이전트(9820)를 부르는 사내 시스템에 발급한 키 — 발급·교체·폐기 (apps/keys.py kp 와 같은 장부).
+      물류사에 보내는 키는 K-Logistics가 발급·관리한다</small></h2>
+    <div class="body" id="keysPanel"></div>
+  </section>
 </main>
 <div id="toast"></div>
 
@@ -298,5 +304,6 @@ async function sync() {
   await refresh();
 })();
 </script>
+<script src="/keys.js"></script>
 </body>
 </html>

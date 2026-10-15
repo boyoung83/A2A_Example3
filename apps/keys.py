@@ -31,7 +31,7 @@ ISSUERS = {
     "kl": ("K-Logistics → 화주", "KL_DB", "klogistics.db", "KL_PARTNER_KEYS", KL_PARTNERS),
     "kp": ("K정밀웍스 → 사내 시스템", "KP_DB", "kprecision.db", "KP_CLIENT_KEYS", KP_CLIENTS),
 }
-STATE_LABEL = {"ACTIVE": "유효", "EXPIRING": "교체 유예", "EXPIRED": "만료", "REVOKED": "폐기"}
+STATE_LABEL = {"ACTIVE": "유효", "EXPIRING": "만료 예정", "EXPIRED": "만료", "REVOKED": "폐기"}
 
 
 def registry(issuer: str) -> KeyRegistry:

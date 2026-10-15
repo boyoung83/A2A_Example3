@@ -15,7 +15,9 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
 from common.a2a_io import fetch_card  # noqa: E402
-from common.auth import requires_api_key  # noqa: E402
+from common.auth import KP_CLIENTS, requires_api_key  # noqa: E402
+from common.keys_web import keys_router  # noqa: E402
+from common.keystore import KeyRegistry  # noqa: E402
 from kprecision.service import ORDER_LABEL, SHIPMENT_LABEL, ProcurementError, ProcurementService  # noqa: E402
 
 HOST = os.getenv("KP_WEB_HOST", "127.0.0.1")
@@ -25,6 +27,9 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 service = ProcurementService()
 app = FastAPI(title="K정밀웍스 구매 포털")
+# 사내 시스템에 발급한 키 장부 — 구매 에이전트(9820)가 요청마다 확인하는 바로 그 장부
+app.include_router(keys_router(KeyRegistry(service.path, "kp", "KP_CLIENT_KEYS", KP_CLIENTS), KP_CLIENTS,
+                               "K정밀웍스 → 사내 시스템 키 (구매 에이전트 9820 호출용)", "사내 시스템 이름"))
 
 
 @app.exception_handler(ProcurementError)

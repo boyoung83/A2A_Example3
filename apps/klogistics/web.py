@@ -14,7 +14,10 @@ import uvicorn  # noqa: E402
 from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
+from common.auth import KL_PARTNERS  # noqa: E402
 from common.contracts import SHIPMENT_FLOW, SHIPMENT_LABEL  # noqa: E402
+from common.keys_web import keys_router  # noqa: E402
+from common.keystore import KeyRegistry  # noqa: E402
 from klogistics import pricing  # noqa: E402
 from klogistics.service import LogisticsError, LogisticsService  # noqa: E402
 
@@ -25,6 +28,9 @@ STATIC = Path(__file__).resolve().parent / "static"
 
 service = LogisticsService()
 app = FastAPI(title="K-Logistics 운영 콘솔")
+# 화주에게 발급한 키 장부 — 물류 에이전트(9810)가 요청마다 확인하는 바로 그 장부
+app.include_router(keys_router(KeyRegistry(service.path, "kl", "KL_PARTNER_KEYS", KL_PARTNERS), KL_PARTNERS,
+                               "K-Logistics → 화주 파트너 키", "화주 이름 (예: K정밀웍스)"))
 
 
 @app.exception_handler(LogisticsError)

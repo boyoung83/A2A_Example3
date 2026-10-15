@@ -37,6 +37,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button:disabled{opacity:.5;cursor:default}
 input,select{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 8px;min-width:0}
 .chip{font-size:11px;border-radius:999px;padding:1px 8px;color:#fff;white-space:nowrap}
+button.danger{color:var(--bad)}
 .c-ok{background:var(--ok)} .c-run{background:var(--run)} .c-wait{background:var(--wait)} .c-bad{background:var(--bad)} .c-idle{background:var(--idle)}
 .list .s{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 14px;border-bottom:1px solid var(--line);cursor:pointer}
 .list .s:hover{background:var(--surface2)}
@@ -78,6 +79,10 @@ th{color:var(--muted);font-weight:400}
   <section class="wide">
     <h2>접수된 견적 <small>화주가 A2A quote 스킬로 요청한 견적 — 만료시키면 그 견적으로 온 출고 요청은 거절된다</small></h2>
     <div class="body"><table id="quotes"></table></div>
+  </section>
+  <section class="wide">
+    <h2>파트너 키 <small>화주에게 발급한 X-Partner-Key — 발급·교체·폐기 (apps/keys.py kl 과 같은 장부)</small></h2>
+    <div class="body" id="keysPanel"></div>
   </section>
 </main>
 <div id="toast"></div>
@@ -159,5 +164,6 @@ function renderDetail(s) {
   setInterval(() => { if (!document.activeElement || document.activeElement.id !== 'memo') refresh(); }, 5000);
 })();
 </script>
+<script src="/keys.js"></script>
 </body>
 </html>
