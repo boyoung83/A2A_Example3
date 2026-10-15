@@ -98,6 +98,18 @@ a{color:var(--accent)}
   </section>
 
   <section class="wide">
+    <h2>물류사 파트너 키 <small>K-Logistics가 K정밀웍스에 발급한 X-Partner-Key — 물류사가 키를 교체·폐기하면 새 키를 받아 여기에 등록한다</small></h2>
+    <div class="body">
+      <div id="pkStatus" class="muted">확인 중…</div>
+      <div class="actions" style="margin-bottom:0">
+        <input id="pkInput" placeholder="K-Logistics에게 받은 새 키 (kl-…)" style="flex:1;min-width:260px;font-family:Consolas,monospace;font-size:12px">
+        <button id="pkSave" class="primary">새 키 등록</button>
+        <button id="pkCheck">지금 키 확인</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide">
     <h2>사내 시스템 키 <small>구매 에이전트(9820)를 부르는 사내 시스템에 발급한 키 — 발급·교체·폐기 (apps/keys.py kp 와 같은 장부).
       물류사에 보내는 키는 K-Logistics가 발급·관리한다</small></h2>
     <div class="body" id="keysPanel"></div>
@@ -274,12 +286,25 @@ function renderRequests(all) {
   document.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => act(() => api(`/api/requests/${b.dataset.retry}/retry`, {method:'POST'})));
 }
 
+let PK_OK = null;  // 물류사가 지금 키를 인증하는지 (마지막 확인 결과)
+async function checkPartnerKey() {
+  const s = await api('/api/partner-key').catch(e => ({ok: null, detail: e.message, hint: ''}));
+  const chipCls = s.ok === true ? 'c-ok' : s.ok === false ? 'c-bad' : 'c-idle';
+  const label = s.ok === true ? '인증됨' : s.ok === false ? '거절됨' : '확인 불가';
+  $('#pkStatus').innerHTML = `${chip(label, chipCls)} 지금 쓰는 키 <span class="mono">${esc(s.hint || '(없음)')}</span>
+    <span class="muted">· ${esc(s.detail || '')}${s.source === 'env' ? ' · KL_API_KEY 환경변수로 지정됨' : ''}</span>`;
+  PK_OK = s.ok;
+  await checkPartner();
+  return s;
+}
+
 async function checkPartner() {
   const p = await api('/api/partner').catch(() => ({online:false}));
   $('#pdot').className = 'dot ' + (p.online ? 'on' : 'off');
-  const auth = !p.online ? '' : !p.auth_required ? ' · 인증 없음' : p.has_key ? ' · 파트너 키 인증' : ' · 파트너 키 없음(요청이 거절됩니다)';
+  const auth = !p.online ? '' : !p.auth_required ? ' · 인증 없음' : !p.has_key ? ' · 파트너 키 없음(요청이 거절됩니다)'
+    : PK_OK === false ? ' · 파트너 키 거절됨 — 아래 "물류사 파트너 키"에 새 키를 등록하세요' : PK_OK ? ' · 파트너 키 인증됨' : ' · 파트너 키 확인 중';
   $('#ptext').textContent = p.online ? `물류사 연결됨 · ${p.name}${auth}` : '물류사 응답 없음';
-  if (p.online && p.auth_required && !p.has_key) $('#pdot').className = 'dot off';
+  if (p.online && p.auth_required && (!p.has_key || PK_OK === false)) $('#pdot').className = 'dot off';
   // 처음에 물류사가 꺼져 있어 도시 목록을 못 받았으면, 연결되는 대로 받아서 폼을 다시 그린다
   if (p.online && !CITIES.length && (await loadCities()).changed) refresh();
 }
@@ -297,6 +322,12 @@ async function sync() {
   $('#syncBtn').onclick = sync;
   try { $('#hideTrack').checked = localStorage.getItem('kp.hideTrack') === '1'; } catch {}
   $('#hideTrack').onchange = e => { try { localStorage.setItem('kp.hideTrack', e.target.checked ? '1' : '0'); } catch {} refresh(); };
+  $('#pkCheck').onclick = async () => { const s = await checkPartnerKey(); toast(s.detail, s.ok ? 'ok' : 'bad'); };
+  $('#pkSave').onclick = () => act(async () => {
+    const r = await api('/api/partner-key', {method: 'POST', body: {key: $('#pkInput').value}});
+    $('#pkInput').value = ''; toast(r.detail, r.ok ? 'ok' : 'wait'); await checkPartnerKey();
+  });
+  checkPartnerKey(); setInterval(checkPartnerKey, 30000);
   await loadCities();
   let timer = null;
   $('#auto').onchange = e => { clearInterval(timer); if (e.target.checked) timer = setInterval(sync, 60000); };

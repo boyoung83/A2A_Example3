@@ -304,6 +304,23 @@ async def main() -> int:
         check(await ask_as(fresh) == "COMPLETED", "새로 발급한 키가 통하지 않는다")
         return "파트너 키 전부 폐기·만료 키 거절·재발급 즉시 사용"
 
+    async def k4():
+        from kprecision.service import ProcurementError
+        _, new_key, old = k1.reg.rotate("K정밀웍스", grace_hours=0)   # 전달 없이 즉시 교체
+        r = await kp.track("ORDER-1001")
+        check(r["state"] == "REJECTED" and "인증 실패" in r["message"], f"교체 후에도 옛 키가 통한다: {r['message']}")
+        st = await kp.partner_key_status()
+        check(st["ok"] is False, f"키 상태가 거절로 보이지 않는다: {st}")
+        try:
+            await kp.set_partner_key("kl-wrong-key")
+            check(False, "틀린 키가 등록됐다")
+        except ProcurementError:
+            pass
+        st = await kp.set_partner_key(new_key)                       # 받은 새 키 등록
+        r = await kp.track("ORDER-1001")
+        check(st["ok"] is True and r["state"] == "COMPLETED", f"새 키 등록 후 실패: {r['message']}")
+        return f"전달 없이 즉시 교체({old[0]} 폐기) → K정밀웍스 인증 실패 → 틀린 키 등록 거부 → 새 키 등록 후 복구"
+
     async def e9_e10():
         check("A2A_OBS_URL" not in ENV, "관제 허브 주소가 설정돼 있다")
         return "웹 화면(9811·9821)·관제 허브(9900)를 쓰지 않고 위 시나리오 완료"
@@ -328,6 +345,7 @@ async def main() -> int:
         await scenario("K1", "키 교체 — 유예기간 동안 두 키 유효", k1)
         await scenario("K2", "키 교체 — 옛 키 폐기, 새 키 전달", k2)
         await scenario("K3", "키 폐기·만료·재발급", k3)
+        await scenario("K4", "전달 없는 교체 → 화주 실패 → 새 키 등록으로 복구", k4)
         await scenario("E9", "웹·관제 없이 연동", e9_e10)
     finally:
         for name in list(procs):

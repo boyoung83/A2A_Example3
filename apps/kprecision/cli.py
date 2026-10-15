@@ -62,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("sync", help="대기 요청 재전송 + 배송 중 발주 상태 동기화")
     sub.add_parser("cities", help="물류사 운행 도시 목록 (A2A service-area)")
+    pk = sub.add_parser("partner-key", help="K-Logistics가 발급한 키").add_subparsers(dest="act", required=True)
+    pk.add_parser("check", help="지금 키가 물류사에서 통하는지 확인")
+    p = pk.add_parser("set", help="받은 새 키 등록(물류사에 확인 후 저장)"); p.add_argument("key")
     return ap
 
 
@@ -88,6 +91,8 @@ async def run(args, svc: ProcurementService):
         case ("request", "retry"): return await svc.retry(args.request_id)
         case ("sync", _): return await svc.sync()
         case ("cities", _): return await svc.service_area()
+        case ("partner-key", "check"): return await svc.partner_key_status()
+        case ("partner-key", "set"): return await svc.set_partner_key(args.key)
 
 
 def show_order(o: dict) -> None:
@@ -110,7 +115,10 @@ def show_order(o: dict) -> None:
 
 
 def show(result) -> None:
-    if isinstance(result, dict) and "cities" in result:
+    if isinstance(result, dict) and "hint" in result and "source" in result:
+        mark = {True: "인증됨", False: "거절됨", None: "확인 불가"}[result["ok"]]
+        print(f"[{mark}] 물류사 키 {result['hint'] or '(없음)'} — {result['detail']}")
+    elif isinstance(result, dict) and "cities" in result:
         note = "" if result["fresh"] else f"  (물류사 응답 없음 — 마지막 목록. {result['error']})"
         print(f"{result['carrier'] or '물류사'} 운행 도시: {', '.join(result['cities']) or '(없음)'}{note}")
     elif isinstance(result, dict) and "state" in result and "message" in result:

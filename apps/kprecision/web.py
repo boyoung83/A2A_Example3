@@ -68,6 +68,17 @@ async def partner():
         return {"online": False, "error": str(e)}
 
 
+@app.get("/api/partner-key")
+async def partner_key():
+    """물류사(K-Logistics)가 발급한 키가 지금 통하는지 — 실제로 물어본다."""
+    return await service.partner_key_status()
+
+
+@app.post("/api/partner-key")
+async def set_partner_key(body: dict = Body(...)):
+    return await service.set_partner_key(body.get("key", ""))
+
+
 @app.get("/api/cities")
 async def cities():
     """물류사 운행 도시 (A2A service-area). 물류사가 꺼져 있으면 마지막으로 받은 목록."""

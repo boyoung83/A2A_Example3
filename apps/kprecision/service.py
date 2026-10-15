@@ -16,7 +16,7 @@ from common import db
 from common.a2a_io import (
     COMPLETED, INPUT_REQUIRED, REJECTED, MissingCredentials, PartnerUnavailable, SkillNotOffered, call_skill,
 )
-from common.auth import KL_PARTNERS, client_key
+from common.auth import KL_PARTNERS, client_key, deliver
 from common.contracts import (
     SHIPMENT_LABEL, SKILL_CANCEL_SHIPMENT, SKILL_CHECK_DELIVERY, SKILL_CREATE_SHIPMENT, SKILL_QUOTE,
     SKILL_SERVICE_AREA, validate_reply,
@@ -186,6 +186,38 @@ class ProcurementService:
                 self._set_status(conn, order_no, "DRAFT")
                 msg += " → 발주를 '작성'으로 돌렸습니다. 다시 견적을 요청하세요"
         return self._done(order_no, state, msg)
+
+    async def partner_key_status(self, key: str | None = None) -> dict:
+        """지금 키(또는 주어진 키)가 물류사에서 통하는지 실제로 물어본다(service-area 호출, 업무 기록은 남기지 않음).
+        ok: True 통과 / False 거절 / None 확인 불가(물류사 꺼짐 등)"""
+        key = self.api_key if key is None else key
+        source = "env" if os.getenv("KL_API_KEY") and self._api_key is None else "file"
+        hint = f"{key[:6]}…{key[-4:]}" if key else ""
+        if not key:
+            return {"ok": False, "source": source, "hint": hint, "detail": "등록된 물류사 키가 없습니다"}
+        try:
+            reply = await call_skill(self.partner_url, SKILL_SERVICE_AREA, {}, timeout=self.timeout, api_key=key)
+        except (PartnerUnavailable, SkillNotOffered) as e:
+            return {"ok": None, "source": source, "hint": hint, "detail": f"확인 불가: {e}"}
+        if reply.state == COMPLETED:
+            return {"ok": True, "source": source, "hint": hint, "detail": "물류사가 이 키를 인증했습니다"}
+        return {"ok": False, "source": source, "hint": hint,
+                "detail": "물류사가 이 키를 거절했습니다 (교체·폐기됐을 수 있습니다. K-Logistics에 새 키를 요청하세요)"}
+
+    async def set_partner_key(self, key: str) -> dict:
+        """K-Logistics에게 받은 새 키를 등록한다. 물류사에 먼저 확인해서 거절되는 키는 저장하지 않는다."""
+        key = key.strip()
+        if not key:
+            raise ProcurementError("키를 입력하세요")
+        if os.getenv("KL_API_KEY"):
+            raise ProcurementError("KL_API_KEY 환경변수로 키를 정해 두어서 여기서 바꿀 수 없습니다. 환경변수를 바꾸고 다시 띄우세요")
+        status = await self.partner_key_status(key)
+        if status["ok"] is False:
+            raise ProcurementError(status["detail"].replace("이 키를", "입력한 키를"))
+        deliver(KL_PARTNERS, SHIPPER, key)  # K정밀웍스 쪽 키 보관 파일(개발용 secrets.json)에 저장
+        status["detail"] = ("새 키를 등록했습니다 — " + status["detail"]) if status["ok"] else (
+            "물류사에 연결할 수 없어 확인하지 못한 채 등록했습니다")
+        return status
 
     async def service_area(self) -> dict:
         """물류사가 운행하는 도시 목록을 A2A로 받아 온다. 물류사가 꺼져 있으면 마지막으로 받은 목록을 쓴다.

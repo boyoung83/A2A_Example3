@@ -51,7 +51,7 @@
     let d;
     try { d = await api('/api/keys'); } catch (e) { root.innerHTML = `<div class="muted">키 장부를 읽지 못했습니다: ${esc(e.message)}</div>`; return; }
     const partners = [...new Set(d.keys.map(k => k.partner))];
-    const deliverChecked = root.querySelector('#kDeliver') ? root.querySelector('#kDeliver').checked : true;
+    const deliverChecked = root.querySelector('#kDeliver') ? root.querySelector('#kDeliver').checked : false;  // 기본: 전달 안 함(실제처럼)
     root.innerHTML = `
       <div class="muted" style="font-size:12px;margin-bottom:8px">${esc(d.title)} · 장부 ${esc(d.ledger)} — 원문 대신 해시만 저장, 에이전트가 요청마다 확인하므로 재시작 없이 반영</div>
       <table><tr><th>키</th><th>대상</th><th>상태</th><th>앞뒤 글자</th><th>발급</th><th>최근 사용</th><th>만료</th><th>메모</th><th></th></tr>
@@ -69,7 +69,7 @@
         <button id="kIssue" title="이 대상에게 키 하나를 더 발급">새 키 발급</button>
         <label class="muted" style="font-size:12px">유효 <input id="kExpires" type="number" min="1" step="1" placeholder="무기한" style="width:80px"> 시간</label>
         <button id="kRevokeAll" class="danger" title="이 대상의 유효한 키를 모두 즉시 폐기">대상 키 전부 폐기</button>
-        <label class="muted" style="font-size:12px"><input type="checkbox" id="kDeliver" ${deliverChecked ? 'checked' : ''}> 새 키를 받는 쪽에 전달(개발용)</label>
+        <label class="muted" style="font-size:12px"><input type="checkbox" id="kDeliver" ${deliverChecked ? 'checked' : ''}> 새 키를 받는 쪽 키 파일에 자동 전달(개발용 — 끄면 상대는 새 키를 직접 등록해야 함)</label>
       </div>`;
     const partner = () => root.querySelector('#kPartner').value.trim();
     const deliver = () => root.querySelector('#kDeliver').checked;
