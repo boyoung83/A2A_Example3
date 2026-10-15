@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>K-Logistics 운영 콘솔</title>
+<!-- 파일명: console.html — 물류 운영 담당자 화면. 출고 건 상태를 진행하면 화주는 check-delivery로 가져간다 -->
+<style>
+:root{
+  --bg:#f4f6f3; --surface:#fff; --surface2:#f8faf7; --ink:#1f2420; --ink2:#4c554f; --muted:#7b847e;
+  --line:#dde3db; --accent:#2f6fb7; --ok:#2f8f60; --run:#2f6fb7; --wait:#b7842a; --bad:#c0473e; --idle:#9aa29d;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141816; --surface:#1b201d; --surface2:#202622; --ink:#e4e9e3; --ink2:#b3bcb4; --muted:#87908a;
+  --line:#2e362f; --accent:#6aa5e8; --ok:#4fbf85; --run:#6aa5e8; --wait:#d9a343; --bad:#e06b60; --idle:#6f7872;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "Malgun Gothic",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
+header h1{font-size:17px;margin:0}
+header .sp{flex:1}
+.muted{color:var(--muted)}
+main{display:grid;grid-template-columns:minmax(300px,440px) 1fr;gap:14px;padding:14px 18px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0}
+section>h2{margin:0;padding:9px 14px;font-size:13px;background:var(--surface2);border-bottom:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:center;gap:8px}
+section>h2 small{font-weight:400;color:var(--muted)}
+.wide{grid-column:1/-1}
+.empty{padding:16px;color:var(--muted);font-size:13px}
+.body{padding:12px 14px}
+.mono{font-family:Consolas,"D2Coding",monospace;font-size:12px}
+button,select,input{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--surface2);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+input,select{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 8px;min-width:0}
+.chip{font-size:11px;border-radius:999px;padding:1px 8px;color:#fff;white-space:nowrap}
+.c-ok{background:var(--ok)} .c-run{background:var(--run)} .c-wait{background:var(--wait)} .c-bad{background:var(--bad)} .c-idle{background:var(--idle)}
+.list .s{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.list .s:hover{background:var(--surface2)}
+.list .s.sel{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.list .s .sub{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.track{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0 14px}
+.track div{text-align:center;font-size:12px;padding:8px 4px;border-radius:6px;background:var(--surface2);border:1px solid var(--line);color:var(--muted)}
+.track div.done{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ink)}
+.track div.cur{background:var(--accent);color:#fff;border-color:var(--accent)}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:3px 10px;font-size:13px}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:400}
+.tl{list-style:none;margin:0;padding:0}
+.tl li{display:grid;grid-template-columns:130px 80px 1fr;gap:8px;font-size:12px;padding:2px 0}
+#toast{position:fixed;right:16px;bottom:16px;max-width:min(520px,calc(100vw - 32px));padding:10px 14px;border-radius:8px;
+  color:#fff;background:var(--ink2);display:none;font-size:13px}
+#toast.ok{background:var(--ok)} #toast.bad{background:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>K-Logistics 운영 콘솔</h1>
+  <span class="muted" id="pricing"></span>
+  <span class="sp"></span>
+  <span class="muted" style="font-size:12px">5초마다 새로고침</span>
+</header>
+<main>
+  <section>
+    <h2>출고 건 <select id="filter"><option value="">전체</option></select></h2>
+    <div id="list" class="list"></div>
+  </section>
+  <section>
+    <h2><span id="dTitle">출고 상세</span><small id="dSub"></small></h2>
+    <div id="detail" class="empty">왼쪽에서 출고 건을 고르세요.</div>
+  </section>
+  <section class="wide">
+    <h2>접수된 견적 <small>화주가 A2A quote 스킬로 요청한 견적 — 만료시키면 그 견적으로 온 출고 요청은 거절된다</small></h2>
+    <div class="body"><table id="quotes"></table></div>
+  </section>
+</main>
+<div id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let META = {flow:[], label:{}}, selected = null;
+const CHIP = {ACCEPTED:'c-idle', PICKED_UP:'c-run', IN_TRANSIT:'c-run', DELIVERED:'c-ok', CANCELLED:'c-bad'};
+const chip = (s) => `<span class="chip ${CHIP[s] || 'c-idle'}">${esc(META.label[s] || s)}</span>`;
+const won = n => Number(n).toLocaleString('ko-KR') + '원';
+const t = s => esc((s || '').slice(0,16).replace('T',' '));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+function toast(msg, kind) {
+  const el = $('#toast'); el.textContent = msg; el.className = kind; el.style.display = 'block';
+  clearTimeout(toast.h); toast.h = setTimeout(() => el.style.display = 'none', 5000);
+}
+
+async function refresh() {
+  const rows = await api('/api/shipments' + ($('#filter').value ? `?status=${$('#filter').value}` : ''));
+  $('#list').innerHTML = rows.length ? rows.map(s => `<div class="s ${s.shipment_id === selected ? 'sel' : ''}" data-id="${esc(s.shipment_id)}">
+      <b class="mono">${esc(s.shipment_id)} · ${esc(s.order_no)}</b>${chip(s.status)}
+      <div class="sub">${esc(s.shipper)} · ${esc(s.origin)} → ${esc(s.destination)} · 도착 예정 ${esc(s.eta)}</div></div>`).join('')
+    : '<div class="empty">출고 건이 없습니다.</div>';
+  document.querySelectorAll('.s').forEach(el => el.onclick = () => { selected = el.dataset.id; location.hash = selected; refresh(); });
+  if (selected) renderDetail(await api(`/api/shipments/${selected}`).catch(() => null));
+  const qs = await api('/api/quotes');
+  $('#quotes').innerHTML = qs.length ? `<tr><th>견적</th><th>화주</th><th>주문</th><th>구간</th><th>중량</th><th>금액</th><th>소요</th><th>유효기간</th><th>상태</th><th></th></tr>` +
+    qs.map(q => `<tr><td class="mono">${esc(q.quote_id)}</td><td>${esc(q.shipper)}</td><td>${esc(q.order_no)}</td>
+      <td>${esc(q.origin)} → ${esc(q.destination)}${q.express ? ' (급행)' : ''}</td><td>${q.weight_kg}kg</td><td>${won(q.price_krw)}</td>
+      <td>${q.eta_days}일</td><td>${t(q.valid_until)}</td><td>${esc({OPEN:'유효',USED:'출고 사용',EXPIRED:'만료'}[q.status] || q.status)}</td>
+      <td>${q.status === 'OPEN' ? `<button data-exp="${esc(q.quote_id)}">만료</button>` : ''}</td></tr>`).join('')
+    : '<tr><td class="muted">접수된 견적이 없습니다.</td></tr>';
+  document.querySelectorAll('[data-exp]').forEach(b => b.onclick = async () => {
+    try { await api(`/api/quotes/${b.dataset.exp}/expire`, {method:'POST'}); toast(`${b.dataset.exp} 만료`, 'ok'); } catch (e) { toast(e.message, 'bad'); }
+    refresh();
+  });
+}
+
+function renderDetail(s) {
+  if (!s) return;
+  $('#dTitle').innerHTML = `<span class="mono">${esc(s.shipment_id)}</span> ${chip(s.status)}`;
+  $('#dSub').textContent = s.order_no;
+  const idx = META.flow.indexOf(s.status), next = META.flow[idx + 1];
+  const track = s.status === 'CANCELLED' ? '<div class="cur" style="grid-column:1/-1">취소됨</div>' :
+    META.flow.map((f, i) => `<div class="${i < idx ? 'done' : i === idx ? 'cur' : ''}">${esc(META.label[f])}</div>`).join('');
+  $('#detail').className = 'body';
+  $('#detail').innerHTML = `<div class="track">${track}</div>
+    <dl class="kv"><dt>화주</dt><dd>${esc(s.shipper)}</dd><dt>주문번호</dt><dd>${esc(s.order_no)}</dd>
+      <dt>구간</dt><dd>${esc(s.origin)} → ${esc(s.destination)}</dd><dt>도착 예정</dt><dd>${esc(s.eta)}</dd>
+      <dt>견적</dt><dd class="mono">${esc(s.quote_id)}</dd><dt>인수 연락처</dt><dd>${esc(s.contact || '-')}</dd></dl>
+    ${next && s.status !== 'CANCELLED' ? `<div class="actions"><input id="memo" placeholder="메모 (예: 창원 집하)" style="flex:1">
+      <button class="primary" id="adv">${esc(META.label[next])}(으)로 진행</button></div>` : '<div class="actions muted">더 진행할 단계가 없습니다.</div>'}
+    <ul class="tl">${s.events.map(e => `<li><span class="mono">${t(e.at)}</span><span>${esc(META.label[e.status] || e.status)}</span>
+      <span class="muted">${esc(e.memo)}</span></li>`).join('')}</ul>`;
+  const adv = $('#adv');
+  if (adv) adv.onclick = async () => {
+    adv.disabled = true;
+    try { await api(`/api/shipments/${s.shipment_id}/advance`, {method:'POST', body:{memo: $('#memo').value}}); toast(`${s.shipment_id} → ${META.label[next]}`, 'ok'); }
+    catch (e) { toast(e.message, 'bad'); }
+    refresh();
+  };
+}
+
+(async () => {
+  META = await api('/api/meta');
+  selected = decodeURIComponent(location.hash.slice(1)) || null;  // 주소 뒤 #출고번호 로 바로 열기
+  const p = META.pricing;
+  $('#pricing').textContent = `요금: 기본 ${won(p.base_krw)} + km당 ${p.per_km_krw}원 + kg당 ${p.per_kg_krw}원 · 급행 ×${p.express_rate} · 견적 유효 ${p.quote_ttl_hours}시간`;
+  $('#filter').innerHTML += [...META.flow, 'CANCELLED'].map(s => `<option value="${s}">${META.label[s]}</option>`).join('');
+  $('#filter').onchange = refresh;
+  await refresh();
+  setInterval(() => { if (!document.activeElement || document.activeElement.id !== 'memo') refresh(); }, 5000);
+})();
+</script>
+</body>
+</html>

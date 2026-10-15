@@ -1,0 +1,12 @@
+# 이 저장소에는 에이전트 코드(apps/)와 실행 설정만 올린다. 나머지 실습 폴더는 로컬에만 둔다.
+/*
+!/.gitignore
+!/apps/
+!/pyproject.toml
+!/uv.lock
+!/.python-version
+
+__pycache__/
+*.pyc
+.env
+apps/data/

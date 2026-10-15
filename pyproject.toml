@@ -1,0 +1,17 @@
+[project]
+name = "a2a-lab-part3"
+version = "1.0.0"
+description = "A2A 프로토콜 실전 가이드 — Part 3 여러 에이전트 오케스트레이션 (Ch13~17)"
+requires-python = ">=3.12,<3.13"
+# 이 Part의 패키지 목록입니다. 이 폴더에서 `uv sync` 한 번으로 설치하고, 실행은 `uv run 파일.py`로 합니다.
+dependencies = [
+    "a2a-sdk==1.1.2",
+    "fastapi",
+    "uvicorn",
+    "sse_starlette",
+    "httpx",
+]
+
+[tool.uv]
+# 실습 코드는 패키지가 아니라 폴더별 스크립트이므로 프로젝트 자체는 설치하지 않습니다.
+package = false

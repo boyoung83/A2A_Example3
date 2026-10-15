@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>K정밀웍스 구매 포털</title>
+<!-- 파일명: portal.html — 구매 담당자 화면. /api/* (web.py)만 부르고, 물류사와는 서버가 A2A로 주고받는다 -->
+<style>
+:root{
+  --bg:#f4f6f3; --surface:#fff; --surface2:#f8faf7; --ink:#1f2420; --ink2:#4c554f; --muted:#7b847e;
+  --line:#dde3db; --accent:#5b54b0; --ok:#2f8f60; --run:#2f6fb7; --wait:#b7842a; --bad:#c0473e; --idle:#9aa29d;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141816; --surface:#1b201d; --surface2:#202622; --ink:#e4e9e3; --ink2:#b3bcb4; --muted:#87908a;
+  --line:#2e362f; --accent:#a99ff0; --ok:#4fbf85; --run:#6aa5e8; --wait:#d9a343; --bad:#e06b60; --idle:#6f7872;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "Malgun Gothic",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--surface)}
+header h1{font-size:17px;margin:0}
+header .sp{flex:1}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--idle);display:inline-block}
+.dot.on{background:var(--ok)} .dot.off{background:var(--bad)}
+main{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:14px;padding:14px 18px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+section{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0}
+section>h2{margin:0;padding:9px 14px;font-size:13px;background:var(--surface2);border-bottom:1px solid var(--line);
+  display:flex;justify-content:space-between;align-items:center;gap:8px}
+section>h2 small{font-weight:400;color:var(--muted)}
+.wide{grid-column:1/-1}
+.empty{padding:16px;color:var(--muted);font-size:13px}
+.mono{font-family:Consolas,"D2Coding",monospace;font-size:12px}
+.muted{color:var(--muted)}
+button,select,input{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--surface2);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+input,select{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:4px 8px;min-width:0}
+.chip{font-size:11px;border-radius:999px;padding:1px 8px;color:#fff;white-space:nowrap}
+.c-ok{background:var(--ok)} .c-run{background:var(--run)} .c-wait{background:var(--wait)} .c-bad{background:var(--bad)} .c-idle{background:var(--idle)}
+.olist .o{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:8px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.olist .o:hover{background:var(--surface2)}
+.olist .o.sel{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.olist .o .sub{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.body{padding:12px 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px 12px}
+.grid label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:2px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.steps{display:flex;gap:4px;margin:4px 0 10px;flex-wrap:wrap}
+.steps span{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--surface2);color:var(--muted);border:1px solid var(--line)}
+.steps span.done{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ink)}
+.steps span.cur{background:var(--accent);color:#fff;border-color:var(--accent)}
+.box{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:10px}
+.box h3{margin:0 0 6px;font-size:13px}
+.warn{border-color:var(--wait);background:color-mix(in srgb,var(--wait) 10%,transparent)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:400}
+.tl{list-style:none;margin:0;padding:0}
+.tl li{display:grid;grid-template-columns:130px 80px 1fr;gap:8px;font-size:12px;padding:2px 0}
+#toast{position:fixed;right:16px;bottom:16px;max-width:min(520px,calc(100vw - 32px));padding:10px 14px;border-radius:8px;
+  color:#fff;background:var(--ink2);box-shadow:0 4px 18px rgba(0,0,0,.25);display:none;font-size:13px}
+#toast.ok{background:var(--ok)} #toast.bad{background:var(--bad)} #toast.wait{background:var(--wait)}
+a{color:var(--accent)}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>K정밀웍스 구매 포털</h1>
+  <span class="conn"><span id="pdot" class="dot"></span><span id="ptext">물류사 확인 중…</span></span>
+  <span class="sp"></span>
+  <label class="conn"><input type="checkbox" id="auto"> 60초마다 자동 동기화</label>
+  <button id="syncBtn">지금 동기화</button>
+</header>
+
+<main>
+  <section>
+    <h2>발주 <span>
+      <select id="filter"><option value="">전체</option></select>
+      <button id="newBtn" class="primary">새 발주</button></span></h2>
+    <div id="orders" class="olist"></div>
+  </section>
+
+  <section>
+    <h2><span id="dTitle">발주 상세</span><small id="dSub"></small></h2>
+    <div id="detail" class="empty">왼쪽에서 발주를 고르거나 새 발주를 만드세요.</div>
+  </section>
+
+  <section class="wide">
+    <h2>물류사에 보낸 요청 <small>A2A 요청마다 업무키(request_id)·taskId·상태 — 실패한 요청은 같은 업무키로 다시 보낸다.
+      동기화의 배송 조회는 상태가 바뀐 경우만 남긴다 &nbsp;<span id="hidden"></span>
+      <label class="conn" style="display:inline-flex"><input type="checkbox" id="hideTrack"> 배송 조회 숨기기</label></small></h2>
+    <div class="body"><table id="reqs"></table></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let META = {order_label:{}, shipment_label:{}}, selected = null, creating = false;
+const FLOW = ['DRAFT','QUOTED','APPROVED','SHIPPING_REQUESTED','IN_DELIVERY','DELIVERED','RECEIVED'];
+const STATE_CHIP = {COMPLETED:'c-ok', LOCAL:'c-ok', INPUT_REQUIRED:'c-wait', PENDING_RETRY:'c-wait', SENDING:'c-run',
+  REJECTED:'c-bad', FAILED:'c-bad', INVALID_RESPONSE:'c-bad'};
+const ORDER_CHIP = {DRAFT:'c-idle', QUOTED:'c-run', APPROVED:'c-run', SHIPPING_REQUESTED:'c-run', IN_DELIVERY:'c-run',
+  DELIVERED:'c-ok', RECEIVED:'c-ok', CANCELLED:'c-bad'};
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+function toast(msg, kind = '') {
+  const t = $('#toast'); t.textContent = msg; t.className = kind; t.style.display = 'block';
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 6000);
+}
+const chip = (text, cls) => `<span class="chip ${cls}">${esc(text)}</span>`;
+const won = n => Number(n).toLocaleString('ko-KR') + '원';
+
+async function act(fn) {
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const r = await fn();
+    if (r && 'state' in r) toast(`[${r.state}] ${r.message}`, r.ok ? 'ok' : (r.state === 'INPUT_REQUIRED' || r.state === 'PENDING_RETRY') ? 'wait' : 'bad');
+    return r;
+  } catch (e) { toast(e.message, 'bad'); }
+  finally { document.querySelectorAll('button').forEach(b => b.disabled = false); await refresh(); }
+}
+
+async function refresh() {
+  const orders = await api('/api/orders' + ($('#filter').value ? `?status=${$('#filter').value}` : ''));
+  $('#orders').innerHTML = orders.length ? orders.map(o => `
+    <div class="o ${o.order_no === selected ? 'sel' : ''}" data-no="${esc(o.order_no)}">
+      <b>${esc(o.order_no)}</b>${chip(META.order_label[o.status] || o.status, ORDER_CHIP[o.status])}
+      <div class="sub">${esc(o.item || '-')} · ${esc(o.origin || '?')} → ${esc(o.destination || '?')} · 납기 ${esc(o.due_date || '-')}</div>
+    </div>`).join('') : '<div class="empty">발주가 없습니다.</div>';
+  document.querySelectorAll('.o').forEach(el => el.onclick = () => { selected = el.dataset.no; creating = false; location.hash = selected; refresh(); });
+  if (creating) renderForm(); else if (selected) renderDetail(await api(`/api/orders/${encodeURIComponent(selected)}`).catch(() => null));
+  renderRequests(await api('/api/requests?limit=50'));
+}
+
+function fieldInputs(o = {}, editable = true, only = null) {
+  const f = [['item','품목','text'],['qty','수량','number'],['weight_kg','중량(kg)','number'],['origin','출발지','text'],
+             ['destination','도착지','text'],['due_date','희망 납기','date']];
+  return f.filter(([k]) => !only || only.includes(k)).map(([k, label, type]) => `<label>${label}
+    ${k === 'origin' || k === 'destination' ? citySelect(k, o[k], editable)
+      : `<input name="${k}" type="${type}" value="${esc(o[k] ?? '')}" ${editable ? '' : 'disabled'}>`}</label>`).join('')
+    + (only ? '' : `<label>급행<select name="express" ${editable ? '' : 'disabled'}><option value="0">일반</option>
+      <option value="1" ${o.express ? 'selected' : ''}>급행</option></select></label>`);
+}
+// 운행 도시는 물류사(K-Logistics)가 A2A service-area 스킬로 알려 준다. 못 받았으면 직접 입력칸.
+let CITIES = [];
+function citySelect(name, value, editable) {
+  const dis = editable ? '' : 'disabled';
+  if (!CITIES.length) return `<input name="${name}" value="${esc(value ?? '')}" placeholder="물류사 도시 목록 없음 — 직접 입력" ${dis}>`;
+  const extra = value && !CITIES.includes(value) ? `<option value="${esc(value)}" selected>${esc(value)} (운행 안 함)</option>` : '';
+  return `<select name="${name}" ${dis}><option value="">선택하세요</option>${extra}`
+    + CITIES.map(c => `<option value="${esc(c)}" ${c === value ? 'selected' : ''}>${esc(c)}</option>`).join('') + '</select>';
+}
+async function loadCities() {
+  const a = await api('/api/cities').catch(() => ({cities: []}));
+  const changed = a.cities.length && a.cities.join() !== CITIES.join();
+  if (a.cities.length) CITIES = a.cities;
+  return {changed, fresh: a.fresh};
+}
+function readForm(root) {
+  const out = {};
+  root.querySelectorAll('input[name],select[name]').forEach(el => {
+    if (el.name === 'express') out.express = el.value === '1'; else if (el.value !== '') out[el.name] = el.value;
+  });
+  return out;
+}
+
+function renderForm() {
+  $('#dTitle').textContent = '새 발주'; $('#dSub').textContent = '';
+  $('#detail').className = 'body';
+  $('#detail').innerHTML = `<div class="grid"><label>발주번호 *<input name="order_no" placeholder="예: ORDER-2001" required></label>
+    ${fieldInputs({qty:1})}</div>
+    <div class="actions"><button class="primary" id="saveNew">발주 등록</button><button id="cancelNew">닫기</button></div>`;
+  $('#saveNew').onclick = () => act(async () => {
+    const body = readForm($('#detail'));
+    if (!body.order_no) { $('[name=order_no]').focus(); throw new Error('발주번호를 입력하세요 (예: ORDER-2001)'); }
+    const o = await api('/api/orders', {method:'POST', body}); selected = o.order_no; creating = false;
+    toast(`${o.order_no} 발주 등록`, 'ok');
+  });
+  $('#cancelNew').onclick = () => { creating = false; refresh(); };
+}
+
+function renderDetail(o) {
+  if (!o) { $('#detail').className = 'empty'; $('#detail').textContent = '발주를 찾을 수 없습니다.'; return; }
+  const L = META.order_label, S = META.shipment_label;
+  $('#dTitle').innerHTML = `${esc(o.order_no)} ${chip(L[o.status] || o.status, ORDER_CHIP[o.status])}`;
+  $('#dSub').textContent = o.shipment_id ? `출고 ${o.shipment_id}` : '';
+  const editable = ['DRAFT','QUOTED'].includes(o.status);
+  const idx = FLOW.indexOf(o.status);
+  const steps = o.status === 'CANCELLED' ? `<span class="cur">취소</span>` :
+    FLOW.map((s, i) => `<span class="${i < idx ? 'done' : i === idx ? 'cur' : ''}">${L[s]}</span>`).join('');
+
+  const btn = (id, label, cls = '') => `<button id="${id}" class="${cls}">${label}</button>`;
+  let actions = '';
+  if (editable) actions += btn('bSave', '내용 저장') + btn('bQuote', o.status === 'QUOTED' ? '다시 견적 요청' : '운임 견적 요청', 'primary');
+  if (o.status === 'QUOTED') actions += btn('bApprove', '견적 승인', 'primary');
+  if (o.status === 'APPROVED') actions += `<input id="contact" placeholder="인수 담당 연락처">` + btn('bShip', '출고 요청', 'primary');
+  if (['SHIPPING_REQUESTED','IN_DELIVERY','DELIVERED'].includes(o.status) || o.shipment_id) actions += btn('bTrack', '배송 조회');
+  if (o.status === 'DELIVERED') actions += btn('bReceive', '입고 확인', 'primary');
+  if (!['RECEIVED','CANCELLED','DELIVERED'].includes(o.status)) actions += btn('bCancel', o.shipment_id ? '출고 취소 요청' : '발주 취소', 'danger');
+
+  const ir = o.input_required ? `<div class="box warn"><h3>물류사가 추가 정보를 요청했습니다</h3>
+      <div class="muted">${esc(o.input_required.detail || '')}</div>
+      <div class="grid" id="irForm" style="margin-top:8px">${fieldInputs(o, true, o.input_required.missing)}</div>
+      <div class="actions">${btn('bInput', '채워서 이어 보내기', 'primary')}</div></div>` : '';
+
+  const quotes = o.quotes.length ? `<div class="box"><h3>운임 견적</h3><table><tr><th>견적</th><th>운송사</th><th>금액</th><th>소요</th><th>유효기간</th><th>상태</th></tr>
+      ${o.quotes.map(q => `<tr><td class="mono">${esc(q.quote_id)}</td><td>${esc(q.carrier)}</td><td>${won(q.price_krw)}</td>
+      <td>${q.eta_days}일</td><td>${esc(q.valid_until.slice(0,16).replace('T',' '))}</td>
+      <td>${chip({OFFERED:'제안',CHOSEN:'승인',EXPIRED:'만료'}[q.status] || q.status, {OFFERED:'c-run',CHOSEN:'c-ok',EXPIRED:'c-bad'}[q.status])}</td></tr>`).join('')}
+      </table></div>` : '';
+
+  const d = o.delivery;
+  const delivery = d ? `<div class="box"><h3>배송 현황 <small class="muted">${d.found ? '' : '물류사에 출고 건 없음'} · 조회 ${esc(d.fetched_at.slice(11,19))}</small></h3>
+      ${d.found ? `<div>${chip(S[d.status] || d.status, d.status === 'DELIVERED' ? 'c-ok' : d.status === 'CANCELLED' ? 'c-bad' : 'c-run')}
+      도착 예정 <b>${esc(d.eta || '-')}</b></div>
+      <ul class="tl" style="margin-top:6px">${(d.history || []).map(e => `<li><span class="mono">${esc(e.at.slice(0,16).replace('T',' '))}</span>
+      <span>${esc(S[e.status] || e.status)}</span><span class="muted">${esc(e.memo || '')}</span></li>`).join('')}</ul>` : ''}</div>` : '';
+
+  $('#detail').className = 'body';
+  $('#detail').innerHTML = `<div class="steps">${steps}</div>
+    <div class="grid" id="oForm">${fieldInputs(o, editable)}</div>
+    <div class="actions">${actions}</div>${ir}${quotes}${delivery}`;
+
+  const no = encodeURIComponent(o.order_no), on = (id, f) => { const el = $('#' + id); if (el) el.onclick = f; };
+  on('bSave', () => act(async () => { await api(`/api/orders/${no}`, {method:'PATCH', body: readForm($('#oForm'))}); toast('저장했습니다', 'ok'); }));
+  on('bQuote', () => act(async () => {
+    if (editable) await api(`/api/orders/${no}`, {method:'PATCH', body: readForm($('#oForm'))});
+    return api(`/api/orders/${no}/quote`, {method:'POST'});
+  }));
+  on('bInput', () => act(() => api(`/api/orders/${no}/input`, {method:'POST', body: readForm($('#irForm'))})));
+  on('bApprove', () => act(() => api(`/api/orders/${no}/approve`, {method:'POST', body:{}})));
+  on('bShip', () => act(() => api(`/api/orders/${no}/ship`, {method:'POST', body:{contact: $('#contact').value}})));
+  on('bTrack', () => act(() => api(`/api/orders/${no}/track`, {method:'POST'})));
+  on('bReceive', () => act(() => api(`/api/orders/${no}/receive`, {method:'POST'})));
+  on('bCancel', () => { const reason = prompt('취소 사유'); if (reason !== null) act(() => api(`/api/orders/${no}/cancel`, {method:'POST', body:{reason}})); });
+}
+
+function renderRequests(all) {
+  const obs = META.obs_url;
+  const rows = $('#hideTrack').checked ? all.filter(r => r.skill !== 'check-delivery') : all;
+  $('#hidden').textContent = all.length - rows.length ? `배송 조회 ${all.length - rows.length}건 숨김` : '';
+  $('#reqs').innerHTML = rows.length ? `<tr><th>보낸 시각</th><th>업무키</th><th>발주</th><th>스킬</th><th>상태</th><th>시도</th><th>taskId</th><th>내용</th><th></th></tr>` +
+    rows.map(r => `<tr><td class="mono">${esc((r.sent_at || '').slice(5,19).replace('T',' '))}</td><td class="mono">${esc(r.request_id)}</td>
+      <td>${esc(r.order_no)}</td><td>${esc(r.skill)}</td><td>${chip(r.state, STATE_CHIP[r.state] || 'c-idle')}</td><td>${r.attempts}</td>
+      <td class="mono">${r.task_id ? `<a href="${esc(obs)}/?snapshot=1&select=${esc(r.task_id.slice(0,8))}" target="_blank" title="관제 화면에서 보기">${esc(r.task_id.slice(0,8))}</a>` : '-'}</td>
+      <td class="${r.last_error ? 'err' : 'muted'}">${esc(r.last_error || (r.result && (r.result.detail || r.result.quote_id || r.result.shipment_id || r.result.status)) || '')}</td>
+      <td>${['PENDING_RETRY','FAILED','INVALID_RESPONSE'].includes(r.state) ? `<button data-retry="${esc(r.request_id)}">다시 보내기</button>` : ''}</td></tr>`).join('')
+    : '<tr><td class="muted">아직 보낸 요청이 없습니다.</td></tr>';
+  document.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => act(() => api(`/api/requests/${b.dataset.retry}/retry`, {method:'POST'})));
+}
+
+async function checkPartner() {
+  const p = await api('/api/partner').catch(() => ({online:false}));
+  $('#pdot').className = 'dot ' + (p.online ? 'on' : 'off');
+  $('#ptext').textContent = p.online ? `물류사 연결됨 · ${p.name}` : '물류사 응답 없음';
+  // 처음에 물류사가 꺼져 있어 도시 목록을 못 받았으면, 연결되는 대로 받아서 폼을 다시 그린다
+  if (p.online && !CITIES.length && (await loadCities()).changed) refresh();
+}
+async function sync() {
+  const r = await act(() => api('/api/sync', {method:'POST'}));
+  if (Array.isArray(r)) toast(r.length ? `동기화 ${r.length}건 · 실패 ${r.filter(x => !x.ok).length}건` : '동기화할 건이 없습니다', r.every(x => x.ok) ? 'ok' : 'wait');
+}
+
+(async () => {
+  META = await api('/api/meta');
+  selected = decodeURIComponent(location.hash.slice(1)) || null;  // 주소 뒤 #발주번호 로 바로 열기
+  $('#filter').innerHTML += Object.entries(META.order_label).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $('#filter').onchange = refresh;
+  $('#newBtn').onclick = () => { creating = true; selected = null; refresh(); };
+  $('#syncBtn').onclick = sync;
+  try { $('#hideTrack').checked = localStorage.getItem('kp.hideTrack') === '1'; } catch {}
+  $('#hideTrack').onchange = e => { try { localStorage.setItem('kp.hideTrack', e.target.checked ? '1' : '0'); } catch {} refresh(); };
+  await loadCities();
+  let timer = null;
+  $('#auto').onchange = e => { clearInterval(timer); if (e.target.checked) timer = setInterval(sync, 60000); };
+  await checkPartner(); setInterval(checkPartner, 5000);
+  await refresh();
+})();
+</script>
+</body>
+</html>
