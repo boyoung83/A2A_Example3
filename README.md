@@ -75,23 +75,23 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-  actor 구매 as 구매 담당자
+  actor BUY as 구매 담당자
   participant KP as K정밀웍스 (포털·CLI)
   participant KL as K-Logistics 물류 에이전트
-  actor 운영 as 물류 운영 담당자
-  구매->>KP: 발주 등록 (번호 자동 채번)
+  actor OPS as 물류 운영 담당자
+  BUY->>KP: 발주 등록 (번호 자동 채번)
   KP->>KL: quote {중량, 출발지, 도착지 비어 있음}
   KL-->>KP: INPUT_REQUIRED {missing: destination}
-  구매->>KP: 도착지 입력
+  BUY->>KP: 도착지 입력
   KP->>KL: quote (같은 Task로 이어 보냄)
   KL-->>KP: COMPLETED {견적번호, 금액, 소요일, 유효기간}
-  구매->>KP: 견적 승인 (사내 결재)
+  BUY->>KP: 견적 승인 (사내 결재)
   KP->>KL: create-shipment {견적번호}
   KL-->>KP: COMPLETED {출고번호, 출고 접수}
-  운영->>KL: 집하 → 배송 중 → 배송 완료 (콘솔·CLI)
+  OPS->>KL: 집하 → 배송 중 → 배송 완료 (콘솔·CLI)
   KP->>KL: check-delivery (조회·60초 동기화)
   KL-->>KP: {상태, 도착 예정, 이력}
-  구매->>KP: 입고 확인
+  BUY->>KP: 입고 확인
 ```
 
 모든 화살표(K정밀웍스 → K-Logistics)에는 `X-Partner-Key` 헤더가 붙고, 물류사는 키로 화주를 확인한 뒤 **그 화주의 출고 건·견적만** 다룹니다.
