@@ -110,7 +110,7 @@ uv run obs\obs_run.py apps\kprecision\agent.py
 ```cmd
 :: 예) 회사를 나눠 띄울 때
 set KL_PARTNER_KEYS=K정밀웍스=kl-여기에-발급한-키
-uv run apps\klogisticsgent.py
+uv run apps\klogistics\agent.py
 :: (다른 PC/터미널) K정밀웍스
 set KL_API_KEY=kl-여기에-발급한-키
 uv run apps\kprecision\web.py
