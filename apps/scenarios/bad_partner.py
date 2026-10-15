@@ -15,7 +15,7 @@ from common.a2a_io import COMPLETED, Outcome, SkillExecutor, build_a2a_app  # no
 PORT = int(os.getenv("BAD_PARTNER_PORT", "9862"))
 
 
-async def quote(payload: dict) -> Outcome:
+async def quote(payload: dict, caller: str) -> Outcome:
     return Outcome(COMPLETED, {"quote_id": "BAD-1", "carrier": "불량 물류", "order_no": "SOMEONE-ELSE",
                                "price_krw": -1, "eta_days": 2, "valid_until": "2099-01-01T00:00:00+09:00"},
                    "견적 -1원 (다른 주문)")

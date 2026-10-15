@@ -32,8 +32,14 @@ TMP = Path(tempfile.mkdtemp(prefix="a2a_apps_"))
 ENV = {k: v for k, v in os.environ.items() if k != "A2A_OBS_URL"}  # 관제 허브 없이(E9)
 ENV.update(PYTHONIOENCODING="utf-8", KL_DB=str(TMP / "kl.db"), KP_DB=str(TMP / "kp.db"),
            KL_AGENT_PORT=str(KL_PORT), KP_AGENT_PORT=str(KP_PORT), BAD_PARTNER_PORT=str(BAD_PORT),
-           KL_AGENT_URL=KL_URL, KL_FAIL_ORDERS="ORDER-E8", KP_PARTNER_TIMEOUT="5")
-os.environ.update({k: ENV[k] for k in ("KL_DB", "KP_DB", "KL_AGENT_URL", "KL_FAIL_ORDERS", "KP_PARTNER_TIMEOUT")})
+           KL_AGENT_URL=KL_URL, KL_FAIL_ORDERS="ORDER-E8", KP_PARTNER_TIMEOUT="5",
+           # 인증(Ch18): 실험용 키. K-Logistics는 두 화주(K정밀웍스·K전자)에게 키를 발급했다.
+           A2A_SECRETS_FILE=str(TMP / "secrets.json"),
+           KL_PARTNER_KEYS="K정밀웍스=test-kp-key,K전자=test-ke-key", KL_API_KEY="test-kp-key",
+           KP_CLIENT_KEYS="사내 시스템=test-internal-key")
+KP_KEY, OTHER_KEY, INTERNAL_KEY = "test-kp-key", "test-ke-key", "test-internal-key"
+os.environ.update({k: ENV[k] for k in ("KL_DB", "KP_DB", "KL_AGENT_URL", "KL_FAIL_ORDERS", "KP_PARTNER_TIMEOUT",
+                                       "A2A_SECRETS_FILE", "KL_API_KEY")})
 
 from klogistics.service import LogisticsService  # noqa: E402
 from kprecision.service import ProcurementService  # noqa: E402
@@ -60,6 +66,19 @@ def stop(name: str) -> None:
     if p:
         p.terminate()
         p.wait(10)
+
+
+async def get_task_as(url: str, task_id: str, key: str) -> str:
+    """tasks/get을 키별로 불러 본다. 성공하면 상태 이름, 실패하면 예외 이름."""
+    from a2a.client import ClientConfig, create_client
+    from a2a.types.a2a_pb2 import GetTaskRequest, TaskState
+
+    async with httpx.AsyncClient(headers={"X-Partner-Key": key} if key else {}) as http:
+        client = await create_client(url, client_config=ClientConfig(httpx_client=http))
+        try:
+            return TaskState.Name((await client.get_task(GetTaskRequest(id=task_id))).status.state)
+        except Exception as e:
+            return type(e).__name__
 
 
 def check(cond: bool, msg: str) -> None:
@@ -90,7 +109,7 @@ async def main() -> int:
     kl = LogisticsService()            # 물류 운영 담당자 (CLI·콘솔과 같은 함수)
 
     async def s0():
-        r = await call_text(KP_URL, "ORDER-1001")
+        r = await call_text(KP_URL, "ORDER-1001", api_key=INTERNAL_KEY)
         check(r.state == "COMPLETED" and "배송 중" in r.text, f"{r.state} {r.text}")
         return r.text
 
@@ -174,7 +193,7 @@ async def main() -> int:
         req = next(q for q in r["order"]["requests"] if q["skill"] == "create-shipment")
         sids = set()
         for _ in range(3):  # 응답을 못 받았다고 가정하고 같은 요청을 다시 보낸다
-            again = await call_skill(KL_URL, "create-shipment", req["payload"])
+            again = await call_skill(KL_URL, "create-shipment", req["payload"], api_key=KP_KEY)
             sids.add(again.data["shipment_id"])
         count = sum(1 for s in kl.list_shipments() if s["order_no"] == "ORDER-E4")
         check(sids == {r["order"]["shipment_id"]} and count == 1, f"출고 건 {count}개, {sids}")
@@ -206,6 +225,51 @@ async def main() -> int:
         check(r["state"] == "FAILED" and "운임 시스템 오류" in (req["last_error"] or ""), r["message"])
         return "FAILED + 사유 전달"
 
+    async def a1():
+        for label, url, key in (("물류사·키 없음", KL_URL, ""), ("물류사·틀린 키", KL_URL, "wrong-key"),
+                                ("구매 에이전트·키 없음", KP_URL, ""), ("구매 에이전트·물류사 키", KP_URL, KP_KEY)):
+            from common.a2a_io import _send, fetch_card
+            from a2a.types.a2a_pb2 import Message, Part, Role
+            import uuid
+            msg = Message(message_id=str(uuid.uuid4()), role=Role.ROLE_USER, parts=[Part(text="ORDER-1001")])
+            r = await _send(await fetch_card(url), msg, key, 10)
+            check(r.state == "REJECTED" and r.data.get("reason") == "unauthenticated", f"{label}: {r.state} {r.data}")
+        return "키 없음·틀린 키·다른 회사 키 모두 REJECTED(unauthenticated)"
+
+    async def a2():
+        wrong = ProcurementService(path=TMP / "kp_wrongkey.db", api_key="wrong-key")
+        wrong.create_order("ORDER-A2", weight_kg=10, origin="서울", destination="수원")
+        r = await wrong.request_quote("ORDER-A2")
+        check(r["state"] == "REJECTED" and "인증 실패" in r["message"] and r["order"]["status"] == "DRAFT", r["message"])
+        none = ProcurementService(path=TMP / "kp_nokey.db", api_key="")
+        none.create_order("ORDER-A2", weight_kg=10, origin="서울", destination="수원")
+        r2 = await none.request_quote("ORDER-A2")
+        check(r2["state"] == "FAILED" and "파트너 키" in r2["order"]["requests"][0]["last_error"], r2["message"])
+        return "틀린 키 → 인증 실패 안내 / 키 미설정 → 보내기 전에 FAILED"
+
+    async def a3():
+        info = await call_skill(KL_URL, "check-delivery", {"order_no": "ORDER-1001"}, api_key=OTHER_KEY)
+        check(info.state == "COMPLETED" and info.data["found"] is False, f"남의 배송이 보였다: {info.data}")
+        c = await call_skill(KL_URL, "cancel-shipment", {"request_id": "x-1", "shipment_id": "SHP-0001"},
+                             api_key=OTHER_KEY)
+        check(c.state == "REJECTED" and c.data["reason"] == "unknown_shipment", f"남의 출고 건 취소: {c.data}")
+        qid = kp.get_order("ORDER-E3")["quotes"][0]["quote_id"]
+        s_ = await call_skill(KL_URL, "create-shipment", {"request_id": "x-2", "quote_id": qid, "order_no": "ORDER-E3"},
+                              api_key=OTHER_KEY)
+        check(s_.state == "REJECTED" and s_.data["reason"] == "unknown_quote", f"남의 견적 사용: {s_.data}")
+        mine = await call_skill(KL_URL, "check-delivery", {"order_no": "ORDER-1001"}, api_key=KP_KEY)
+        check(mine.data["found"] is True, "자기 배송이 안 보인다")
+        return "K전자 키로 K정밀웍스 배송 조회·취소·견적 사용 모두 차단"
+
+    async def a4():
+        r = await call_skill(KL_URL, "check-delivery", {"order_no": "ORDER-1001"}, api_key=KP_KEY)
+        results = {who: await get_task_as(KL_URL, r.task_id, key)
+                   for who, key in (("키 없음", ""), ("K전자", OTHER_KEY), ("K정밀웍스", KP_KEY))}
+        check(results["K정밀웍스"] == "TASK_STATE_COMPLETED", str(results))
+        check(not results["키 없음"].startswith("TASK_STATE") and not results["K전자"].startswith("TASK_STATE"),
+              f"남이 Task를 봤다: {results}")
+        return f"tasks/get — {results}"
+
     async def e9_e10():
         check("A2A_OBS_URL" not in ENV, "관제 허브 주소가 설정돼 있다")
         return "웹 화면(9811·9821)·관제 허브(9900)를 쓰지 않고 위 시나리오 완료"
@@ -223,6 +287,10 @@ async def main() -> int:
         await scenario("E6", "계약 위반 응답", e6)
         await scenario("E7", "출고 취소", e7)
         await scenario("E8", "물류사 내부 오류", e8)
+        await scenario("A1", "인증 — 키 없음·틀린 키 거절", a1)
+        await scenario("A2", "인증 — 구매 시스템의 키가 틀리거나 없음", a2)
+        await scenario("A3", "권한 — 다른 화주의 배송·출고·견적 차단", a3)
+        await scenario("A4", "권한 — 다른 화주·무인증의 Task 조회 차단", a4)
         await scenario("E9", "웹·관제 없이 연동", e9_e10)
     finally:
         for name in list(procs):

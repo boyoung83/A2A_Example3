@@ -271,7 +271,9 @@ function renderRequests(all) {
 async function checkPartner() {
   const p = await api('/api/partner').catch(() => ({online:false}));
   $('#pdot').className = 'dot ' + (p.online ? 'on' : 'off');
-  $('#ptext').textContent = p.online ? `물류사 연결됨 · ${p.name}` : '물류사 응답 없음';
+  const auth = !p.online ? '' : !p.auth_required ? ' · 인증 없음' : p.has_key ? ' · 파트너 키 인증' : ' · 파트너 키 없음(요청이 거절됩니다)';
+  $('#ptext').textContent = p.online ? `물류사 연결됨 · ${p.name}${auth}` : '물류사 응답 없음';
+  if (p.online && p.auth_required && !p.has_key) $('#pdot').className = 'dot off';
   // 처음에 물류사가 꺼져 있어 도시 목록을 못 받았으면, 연결되는 대로 받아서 폼을 다시 그린다
   if (p.online && !CITIES.length && (await loadCities()).changed) refresh();
 }

@@ -13,7 +13,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from common import db
-from common.a2a_io import COMPLETED, INPUT_REQUIRED, REJECTED, PartnerUnavailable, SkillNotOffered, call_skill
+from common.a2a_io import (
+    COMPLETED, INPUT_REQUIRED, REJECTED, MissingCredentials, PartnerUnavailable, SkillNotOffered, call_skill,
+)
+from common.auth import KL_PARTNERS, client_key
 from common.contracts import (
     SHIPMENT_LABEL, SKILL_CANCEL_SHIPMENT, SKILL_CHECK_DELIVERY, SKILL_CREATE_SHIPMENT, SKILL_QUOTE,
     SKILL_SERVICE_AREA, validate_reply,
@@ -50,9 +53,12 @@ class ProcurementError(ValueError):
 
 
 class ProcurementService:
-    def __init__(self, path: str | Path | None = None, partner_url: str | None = None) -> None:
+    def __init__(self, path: str | Path | None = None, partner_url: str | None = None,
+                 api_key: str | None = None) -> None:
         self.path = Path(path or os.getenv("KP_DB") or DEFAULT_DB)
         self.partner_url = (partner_url or os.getenv("KL_AGENT_URL") or "http://127.0.0.1:9810").rstrip("/")
+        # K-Logistics가 K정밀웍스에 발급한 파트너 키 (환경변수 KL_API_KEY, 없으면 로컬 개발용 secrets.json)
+        self.api_key = api_key if api_key is not None else client_key("KL_API_KEY", KL_PARTNERS, SHIPPER)
         self.timeout = float(os.getenv("KP_PARTNER_TIMEOUT", "15"))
         self._area: dict | None = None  # 물류사 운행 도시 — 마지막으로 받은 것
         db.init(self.path, SCHEMA)
@@ -181,7 +187,8 @@ class ProcurementService:
         """물류사가 운행하는 도시 목록을 A2A로 받아 온다. 물류사가 꺼져 있으면 마지막으로 받은 목록을 쓴다.
         참고 정보 조회라 partner_requests에는 남기지 않는다."""
         try:
-            reply = await call_skill(self.partner_url, SKILL_SERVICE_AREA, {}, timeout=self.timeout)
+            reply = await call_skill(self.partner_url, SKILL_SERVICE_AREA, {}, timeout=self.timeout,
+                                     api_key=self.api_key)
             if reply.state != COMPLETED:
                 raise RuntimeError(f"{reply.state}: {reply.text}")
             area = validate_reply(SKILL_SERVICE_AREA, reply.data)
@@ -267,7 +274,8 @@ class ProcurementService:
 
     async def route_inquiry(self, order_no: str) -> tuple[str, dict]:
         """구매 에이전트가 외부 문의(기존 call_router.py)를 받아 물류사에 위임할 때 쓴다."""
-        reply = await call_skill(self.partner_url, SKILL_CHECK_DELIVERY, {"order_no": order_no}, timeout=self.timeout)
+        reply = await call_skill(self.partner_url, SKILL_CHECK_DELIVERY, {"order_no": order_no}, timeout=self.timeout,
+                                 api_key=self.api_key)
         if reply.state != COMPLETED:
             raise RuntimeError(f"물류사 배송 조회 {reply.state}: {reply.text}")
         info = validate_reply(SKILL_CHECK_DELIVERY, reply.data, order_no)
@@ -300,17 +308,17 @@ class ProcurementService:
         try:
             try:
                 reply = await call_skill(self.partner_url, skill, body, task_id=task_id or "",
-                                         context_id=context_id or "", timeout=self.timeout)
-            except PartnerUnavailable:
+                                         context_id=context_id or "", timeout=self.timeout, api_key=self.api_key)
+            except (PartnerUnavailable, MissingCredentials):
                 raise
             except Exception:
                 if not resume:
                     raise
                 # 물류사가 재시작해 이어 보낼 Task가 없어졌다 — 같은 업무키로 새 Task를 연다.
-                reply = await call_skill(self.partner_url, skill, body, timeout=self.timeout)
+                reply = await call_skill(self.partner_url, skill, body, timeout=self.timeout, api_key=self.api_key)
         except PartnerUnavailable as e:
             state, error = "PENDING_RETRY", str(e)
-        except SkillNotOffered as e:
+        except (SkillNotOffered, MissingCredentials) as e:
             state, error = "FAILED", str(e)
         except Exception as e:
             state, error = "FAILED", f"{type(e).__name__}: {e}"
@@ -385,6 +393,8 @@ def _message(skill: str, state: str, parsed, result, error) -> str:
         return parsed.summary()
     if state == INPUT_REQUIRED:
         return f"물류사가 추가 정보를 요청했습니다: {', '.join((result or {}).get('missing', []))}"
+    if state == REJECTED and (result or {}).get("reason") == "unauthenticated":
+        return "물류사 인증 실패: K-Logistics가 발급한 파트너 키(KL_API_KEY)를 확인하세요"
     if state == REJECTED:
         return f"물류사가 거절했습니다: {(result or {}).get('detail') or (result or {}).get('reason')}"
     if state == "PENDING_RETRY":

@@ -5,6 +5,7 @@
 ```text
 apps/
 ├── common/
+│   ├── auth.py        # 파트너 API Key 인증(Ch18) — 키 확인·카드 표시·Task 조회 차단
 │   ├── contracts.py   # 스킬별 요청·응답 계약 (pydantic)
 │   ├── a2a_io.py      # 서버: SkillExecutor(스킬 → 업무 함수 → Task 상태) / 클라이언트: call_skill
 │   └── db.py          # 회사별 SQLite (WAL)
@@ -37,7 +38,7 @@ uv sync
 uv run apps\scenarios\run_all.py
 ```
 
-에이전트를 임시 포트(9860~9862)와 임시 DB로 직접 띄워 시나리오 13개를 돌리고 `13/13 PASS`를 출력합니다. 이미 띄워 둔 서버와 겹치지 않습니다.
+에이전트를 임시 포트(9860~9862)와 임시 DB로 직접 띄워 시나리오 17개(인증·권한 4개 포함)를 돌리고 `17/17 PASS`를 출력합니다. 이미 띄워 둔 서버와 겹치지 않습니다.
 
 ## 손으로 해 보기 — 웹 화면 없이
 
@@ -64,7 +65,7 @@ uv run apps\kprecision\cli.py cities                            :: 물류사 운
 uv run apps\kprecision\cli.py request list                      :: 물류사에 보낸 요청(업무키·taskId·상태)
 ```
 
-기존 실습 클라이언트 방식(텍스트 한 줄)도 그대로 받습니다. `call_router.py`의 주소를 9820으로 바꾸면 같은 결과가 나옵니다.
+기존 실습 클라이언트 방식(텍스트 한 줄)도 그대로 받습니다. 단, 구매 에이전트(9820)는 사내 시스템 키(`KP_API_KEY`)가 있어야 합니다.
 
 ## 웹 화면으로
 
@@ -90,6 +91,31 @@ uv run obs\obs_run.py apps\kprecision\agent.py
 
 포털·CLI에서 보낸 A2A 요청도 관제 화면에 나오게 하려면 CLI만 감쌀 수 있습니다: `uv run obs\obs_run.py apps\kprecision\cli.py quote request ORDER-2001`.
 
+## 인증 (Ch18 방식 — 파트너 API Key)
+
+회사 간 A2A 호출은 상대가 발급한 키를 `X-Partner-Key` 헤더에 실어야 합니다. Agent Card에 이 요구가 적혀 있고(`securitySchemes`), 카드 조회 자체는 인증 없이 열려 있습니다.
+
+| 호출 | 받는 쪽이 확인하는 키 | 보내는 쪽 키 |
+|---|---|---|
+| K정밀웍스 → K-Logistics (9810) | `KL_PARTNER_KEYS` (화주 이름=키, …) | `KL_API_KEY` |
+| 사내 시스템 → K정밀웍스 구매 에이전트 (9820) | `KP_CLIENT_KEYS` | `KP_API_KEY` |
+
+- 키가 없거나 틀리면 일을 시작하기 전에 **REJECTED** `{"reason": "unauthenticated"}`. `tasks/get`·`cancel`·`subscribe`도 인증 없이는 "없는 Task".
+- **권한**: 키로 확인된 화주는 자기 출고 건·견적만 조회·사용·취소합니다. 남의 주문은 "결과 없음", 남의 견적·출고 건은 "없는 건"으로 답해 존재 여부도 알려 주지 않습니다. 화주 이름은 요청 본문이 아니라 키로 정하고, 업무키도 화주별로 따로 셉니다. Task도 화주별로 나뉘어 남의 Task를 조회할 수 없습니다.
+- 구매 에이전트는 받은 키를 물류사로 넘기지 않고 자기 키(`KL_API_KEY`)를 씁니다. 키는 상대 카드가 요구할 때만 보냅니다.
+- 환경변수가 없으면 로컬 개발용 `apps/data/secrets.json`을 씁니다(처음 실행 때 무작위 키로 생성, git 제외). 한 PC에서 "발급한 키를 전달했다"를 흉내 낸 것이므로, 실제로 회사를 나눠 띄울 때는 환경변수로 넣습니다.
+- 포털 상단에 "파트너 키 인증 / 키 없음"이 표시되고, 인증 실패는 요청 내역에 "물류사 인증 실패"로 남습니다.
+- 웹 화면(9811·9821)은 각 회사 내부용이라 이번 범위에서는 로그인을 두지 않았습니다(127.0.0.1에서만 열림).
+
+```cmd
+:: 예) 회사를 나눠 띄울 때
+set KL_PARTNER_KEYS=K정밀웍스=kl-여기에-발급한-키
+uv run apps\klogisticsgent.py
+:: (다른 PC/터미널) K정밀웍스
+set KL_API_KEY=kl-여기에-발급한-키
+uv run apps\kprecision\web.py
+```
+
 ## 설정 (환경변수)
 
 | 변수 | 기본값 | 뜻 |
@@ -101,6 +127,9 @@ uv run obs\obs_run.py apps\kprecision\agent.py
 | `KL_SEED` / `KP_SEED` | 1 | 0이면 ORDER-1001·1002 시드를 넣지 않음 |
 | `KP_PARTNER_TIMEOUT` | 15 | 물류사 응답 대기(초), 넘으면 PENDING_RETRY |
 | `KL_FAIL_ORDERS` | (없음) | 실험용: 이 주문번호는 물류사 내부 오류(E8) |
+| `KL_PARTNER_KEYS` / `KL_API_KEY` | secrets.json | 물류사가 받을 키 목록 / K정밀웍스가 보낼 키 |
+| `KP_CLIENT_KEYS` / `KP_API_KEY` | secrets.json | 구매 에이전트가 받을 키 목록 / 사내 시스템이 보낼 키 |
+| `A2A_SECRETS_FILE` | apps/data/secrets.json | 로컬 개발용 키 파일 위치 |
 
 ## 회사 간 계약 요약
 

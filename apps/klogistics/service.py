@@ -48,7 +48,17 @@ class LogisticsService:
         if os.getenv("KL_SEED", "1") != "0":
             self._seed()
 
-    # --- 업무키 ---------------------------------------------------------------
+    # --- 업무키·권한 ---------------------------------------------------------
+    @staticmethod
+    def _key(shipper: str | None, request_id: str) -> str:
+        """업무키는 화주별로 따로 센다 — 다른 화주가 같은 request_id를 보내도 남의 결과를 받지 못한다."""
+        return f"{shipper}|{request_id}" if shipper else request_id
+
+    @staticmethod
+    def _owned(row: dict | None, shipper: str | None) -> bool:
+        """shipper가 None이면 내부 조작(운영 콘솔·CLI), 아니면 인증된 화주 — 자기 건만 본다."""
+        return row is not None and (shipper is None or row["shipper"] == shipper)
+
     def _recall(self, conn, request_id: str):
         hit = db.row(conn.execute("SELECT kind, body FROM processed_requests WHERE request_id=?", (request_id,)))
         return _KINDS[hit["kind"]].model_validate_json(hit["body"]) if hit else None
@@ -72,23 +82,26 @@ class LogisticsService:
     def service_area(self) -> ServiceArea:
         return ServiceArea(carrier=pricing.CARRIER, cities=list(pricing.CITY_XY_KM))
 
-    def check_delivery(self, order_no: str) -> DeliveryInfo:
+    def check_delivery(self, order_no: str, shipper: str | None = None) -> DeliveryInfo:
         self._check_fault(order_no)
         with db.session(self.path) as conn:
             ship = db.row(conn.execute(
-                "SELECT * FROM shipments WHERE order_no=? ORDER BY (status='CANCELLED'), created_at DESC LIMIT 1",
-                (order_no,)))
-            if ship is None:
+                "SELECT * FROM shipments WHERE order_no=? AND (? IS NULL OR shipper=?)"
+                " ORDER BY (status='CANCELLED'), created_at DESC LIMIT 1", (order_no, shipper, shipper)))
+            if ship is None:  # 남의 화물이면 '없음'과 똑같이 답한다(존재 여부도 알려 주지 않는다)
                 return DeliveryInfo(found=False, order_no=order_no)
             events = db.rows(conn.execute(
                 "SELECT status, memo, at FROM shipment_events WHERE shipment_id=? ORDER BY id", (ship["shipment_id"],)))
         return DeliveryInfo(found=True, order_no=order_no, shipment_id=ship["shipment_id"], status=ship["status"],
                             eta=ship["eta"], history=[DeliveryEvent(**e) for e in events])
 
-    def quote(self, req: QuoteRequest) -> Quote | Rejection | InputNeeded:
+    def quote(self, req: QuoteRequest, shipper: str | None = None) -> Quote | Rejection | InputNeeded:
         self._check_fault(req.order_no)
+        if shipper:  # 화주는 요청 본문이 아니라 인증된 키로 정한다
+            req = req.model_copy(update={"shipper": shipper})
+        rid = self._key(shipper, req.request_id)
         with db.session(self.path) as conn:
-            if (done := self._recall(conn, req.request_id)) is not None:
+            if (done := self._recall(conn, rid)) is not None:
                 return done
             if missing := req.missing_fields():
                 return InputNeeded(missing=missing, detail="견적에 필요한 정보가 비어 있습니다: " + ", ".join(missing))
@@ -103,17 +116,21 @@ class LogisticsService:
                 result = Quote(quote_id=self._next_id(conn, "quotes", "quote_id", "Q"), carrier=pricing.CARRIER,
                                order_no=req.order_no, price_krw=krw, eta_days=days, valid_until=valid_until)
                 conn.execute("INSERT INTO quotes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (result.quote_id, req.request_id, req.order_no, req.shipper, req.weight_kg, req.origin,
+                             (result.quote_id, rid, req.order_no, req.shipper, req.weight_kg, req.origin,
                               req.destination, int(req.express), krw, days, valid_until, "OPEN", db.now()))
-            self._remember(conn, req.request_id, "quote", result)
+            self._remember(conn, rid, "quote", result)
             return result
 
-    def create_shipment(self, req: ShipmentRequest) -> ShipmentReceipt | Rejection:
+    def create_shipment(self, req: ShipmentRequest, shipper: str | None = None) -> ShipmentReceipt | Rejection:
         self._check_fault(req.order_no)
+        if shipper:
+            req = req.model_copy(update={"shipper": shipper})
+        rid = self._key(shipper, req.request_id)
         with db.session(self.path) as conn:
-            if (done := self._recall(conn, req.request_id)) is not None:
+            if (done := self._recall(conn, rid)) is not None:
                 return done
             q = db.row(conn.execute("SELECT * FROM quotes WHERE quote_id=?", (req.quote_id,)))
+            q = q if self._owned(q, shipper) else None  # 남의 견적은 없는 견적으로
             existing = db.row(conn.execute("SELECT * FROM shipments WHERE quote_id=?", (req.quote_id,)))
             if q is None:
                 result = Rejection(reason="unknown_quote", detail=f"없는 견적입니다: {req.quote_id}")
@@ -131,20 +148,22 @@ class LogisticsService:
                 eta = (date.today() + timedelta(days=q["eta_days"])).isoformat()
                 now = db.now()
                 conn.execute("INSERT INTO shipments VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (sid, req.request_id, req.quote_id, req.order_no, req.shipper or q["shipper"],
+                             (sid, rid, req.quote_id, req.order_no, req.shipper or q["shipper"],
                               req.contact, q["origin"], q["destination"], "ACCEPTED", eta, now, now))
                 conn.execute("INSERT INTO shipment_events(shipment_id,status,memo,at) VALUES(?,?,?,?)",
                              (sid, "ACCEPTED", f"{q['origin']} → {q['destination']} 출고 접수", now))
                 conn.execute("UPDATE quotes SET status='USED' WHERE quote_id=?", (req.quote_id,))
                 result = ShipmentReceipt(shipment_id=sid, order_no=req.order_no, status="ACCEPTED")
-            self._remember(conn, req.request_id, "create-shipment", result)
+            self._remember(conn, rid, "create-shipment", result)
             return result
 
-    def cancel_shipment(self, req: CancelRequest) -> ShipmentReceipt | Rejection:
+    def cancel_shipment(self, req: CancelRequest, shipper: str | None = None) -> ShipmentReceipt | Rejection:
+        rid = self._key(shipper, req.request_id)
         with db.session(self.path) as conn:
-            if (done := self._recall(conn, req.request_id)) is not None:
+            if (done := self._recall(conn, rid)) is not None:
                 return done
             ship = db.row(conn.execute("SELECT * FROM shipments WHERE shipment_id=?", (req.shipment_id,)))
+            ship = ship if self._owned(ship, shipper) else None  # 남의 출고 건은 없는 건으로
             if ship is None:
                 result = Rejection(reason="unknown_shipment", detail=f"없는 출고 건입니다: {req.shipment_id}")
             elif ship["status"] == "CANCELLED":
@@ -155,7 +174,7 @@ class LogisticsService:
             else:
                 self._set_status(conn, ship["shipment_id"], "CANCELLED", f"화주 취소: {req.reason}".strip())
                 result = ShipmentReceipt(shipment_id=ship["shipment_id"], order_no=ship["order_no"], status="CANCELLED")
-            self._remember(conn, req.request_id, "cancel-shipment", result)
+            self._remember(conn, rid, "cancel-shipment", result)
             return result
 
     # --- 운영자 조작 ---------------------------------------------------------

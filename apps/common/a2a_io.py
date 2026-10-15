@@ -48,16 +48,18 @@ class Outcome:
     summary: str
 
 
-Handler = Callable[[dict], Awaitable[Outcome]]
+Handler = Callable[[dict, str], Awaitable[Outcome]]  # (payload, 호출한 파트너 이름)
 
 
 class SkillExecutor(AgentExecutor):
     def __init__(self, handlers: dict[str, Handler], default_skill: str | None = None,
-                 text_to_payload: Callable[[str], dict] | None = None, name: str = "agent") -> None:
+                 text_to_payload: Callable[[str], dict] | None = None, name: str = "agent",
+                 auth_required: bool = False) -> None:
         self.handlers = handlers
         self.default_skill = default_skill
         self.text_to_payload = text_to_payload
         self.name = name
+        self.auth_required = auth_required
 
     def _parse(self, context: RequestContext) -> tuple[str | None, dict]:
         dicts = [d for d in get_data_parts(context.message.parts) if isinstance(d, dict)]
@@ -75,6 +77,16 @@ class SkillExecutor(AgentExecutor):
             task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
         updater = TaskUpdater(event_queue, task.id, task.context_id)
+
+        user = context.call_context.user if context.call_context else None
+        caller = user.user_name if user is not None and user.is_authenticated else ""
+        if self.auth_required and not caller:
+            # 인증 실패는 일을 시작하기 전에 거절한다(Ch18). 어떤 키가 틀렸는지는 알려 주지 않는다.
+            print(f"[{self.name}] 인증되지 않은 요청 거부")
+            parts = data_and_text({"reason": "unauthenticated", "detail": "유효한 파트너 키가 필요합니다"},
+                                  "거절: 인증되지 않은 요청입니다 (X-Partner-Key)")
+            await updater.update_status(TaskState.TASK_STATE_REJECTED, message=updater.new_agent_message(parts))
+            return
         await updater.update_status(TaskState.TASK_STATE_WORKING)
 
         skill, payload = self._parse(context)
@@ -84,7 +96,7 @@ class SkillExecutor(AgentExecutor):
                               f"지원하지 않는 스킬입니다: {skill}")
         else:
             try:
-                outcome = await handler(payload)
+                outcome = await handler(payload, caller)
             except ValidationError as e:
                 detail = "; ".join(f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
                 outcome = Outcome(REJECTED, {"reason": "invalid_request", "detail": detail},
@@ -179,20 +191,40 @@ async def _receive(client, request) -> Reply:
     return Reply(name, data, part_text(parts), task_id, context_id, raw)
 
 
+class MissingCredentials(Exception):
+    """상대 Agent Card가 API Key를 요구하는데 보낼 키가 없다."""
+
+
+async def _send(card: AgentCard, message: Message, api_key: str, timeout: float) -> Reply:
+    """키가 있으면 X-Partner-Key 헤더를 단 httpx 클라이언트로 보낸다(Ch18 call_secure.py 방식)."""
+    from a2a.client import ClientConfig
+
+    from common.auth import API_KEY_HEADER
+
+    headers = {API_KEY_HEADER: api_key} if api_key else {}
+    async with httpx.AsyncClient(headers=headers, timeout=timeout) as http:
+        client = await create_client(card, client_config=ClientConfig(httpx_client=http))
+        return await asyncio.wait_for(_receive(client, SendMessageRequest(message=message)), timeout)
+
+
 async def call_skill(url: str, skill: str, payload: dict, *, task_id: str = "", context_id: str = "",
-                     timeout: float = 15.0) -> Reply:
+                     timeout: float = 15.0, api_key: str = "") -> Reply:
+    from common.auth import requires_api_key
+
     try:
         card = await fetch_card(url)
     except Exception as e:
         raise PartnerUnavailable(f"{url} Agent Card 조회 실패: {e}") from e
     if skill not in [s.id for s in card.skills]:
         raise SkillNotOffered(f"{card.name}에 '{skill}' 스킬이 없습니다")
+    if requires_api_key(card) and not api_key:
+        raise MissingCredentials(f"{card.name}은(는) 파트너 키(X-Partner-Key)가 필요한데 설정된 키가 없습니다")
 
     message = Message(message_id=str(uuid.uuid4()), role=Role.ROLE_USER, task_id=task_id,
                       context_id=context_id, parts=data_and_text({"skill": skill, **payload}, f"{skill} 요청"))
     try:
-        client = await create_client(card)
-        return await asyncio.wait_for(_receive(client, SendMessageRequest(message=message)), timeout)
+        # 키는 상대 카드가 요구할 때만 보낸다 — 키를 요구하지 않는 곳에 남의 회사 키를 흘리지 않는다
+        return await _send(card, message, api_key if requires_api_key(card) else "", timeout)
     except TimeoutError as e:
         raise PartnerUnavailable(f"{card.name} 응답 대기시간 {timeout:.0f}초 초과") from e
     except (httpx.HTTPError, OSError) as e:
@@ -203,16 +235,19 @@ async def call_skill(url: str, skill: str, payload: dict, *, task_id: str = "", 
         raise
 
 
-async def call_text(url: str, text: str, timeout: float = 15.0) -> Reply:
+async def call_text(url: str, text: str, timeout: float = 15.0, api_key: str = "") -> Reply:
     """기존 실습(call_router.py)처럼 텍스트 한 줄만 보낸다."""
-    client = await create_client(url)
+    from common.auth import requires_api_key
+
+    card = await fetch_card(url)
     message = Message(message_id=str(uuid.uuid4()), role=Role.ROLE_USER, parts=[Part(text=text)])
-    return await asyncio.wait_for(_receive(client, SendMessageRequest(message=message)), timeout)
+    return await _send(card, message, api_key if requires_api_key(card) else "", timeout)
 
 
-def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor):
+def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor, keys: dict[str, str] | None = None):
     """Agent Card + JSON-RPC 경로를 가진 FastAPI 앱. 실행은 uvicorn.run(app, host=..., port=...)로 한다
-    (obs_run.py가 키워드 인자에서 주소를 읽는다)."""
+    (obs_run.py가 키워드 인자에서 주소를 읽는다).
+    keys(파트너 이름 → 키)를 주면 X-Partner-Key로 호출자를 확인한다. Agent Card 조회는 인증 없이 열어 둔다."""
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.routes.agent_card_routes import create_agent_card_routes
     from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
@@ -220,11 +255,15 @@ def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor):
     from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
     from fastapi import FastAPI
 
-    handler = DefaultRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore(), agent_card=agent_card)
+    from common.auth import ApiKeyContextBuilder, AuthRequestHandler
+
+    handler_cls = AuthRequestHandler if keys is not None else DefaultRequestHandler
+    handler = handler_cls(agent_executor=executor, task_store=InMemoryTaskStore(), agent_card=agent_card)
+    builder = ApiKeyContextBuilder(keys) if keys is not None else None
     app = FastAPI()
     add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=create_agent_card_routes(agent_card),
-        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url="/"),
+        jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url="/", context_builder=builder),
     )
     return app

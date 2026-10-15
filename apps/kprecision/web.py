@@ -15,6 +15,7 @@ from fastapi import Body, FastAPI, Request  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
 from common.a2a_io import fetch_card  # noqa: E402
+from common.auth import requires_api_key  # noqa: E402
 from kprecision.service import ORDER_LABEL, SHIPMENT_LABEL, ProcurementError, ProcurementService  # noqa: E402
 
 HOST = os.getenv("KP_WEB_HOST", "127.0.0.1")
@@ -56,7 +57,8 @@ async def meta():
 async def partner():
     try:
         card = await fetch_card(service.partner_url)
-        return {"online": True, "name": card.name, "skills": [s.id for s in card.skills]}
+        return {"online": True, "name": card.name, "skills": [s.id for s in card.skills],
+                "auth_required": requires_api_key(card), "has_key": bool(service.api_key)}
     except Exception as e:
         return {"online": False, "error": str(e)}
 
