@@ -38,7 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     order = sub.add_parser("order", help="발주").add_subparsers(dest="act", required=True)
     p = order.add_parser("list"); p.add_argument("--status")
     p = order.add_parser("show"); p.add_argument("order_no")
-    p = order.add_parser("create"); p.add_argument("order_no"); order_fields(p)
+    p = order.add_parser("create"); p.add_argument("order_no", nargs="?", help="생략하면 자동 채번"); order_fields(p)
+    order.add_parser("next-no", help="다음 발주번호 제안")
     p = order.add_parser("update"); p.add_argument("order_no"); order_fields(p)
     p = order.add_parser("approve"); p.add_argument("order_no"); p.add_argument("--quote", dest="quote_id")
     p = order.add_parser("receive", help="입고 확인"); p.add_argument("order_no")
@@ -73,7 +74,8 @@ async def run(args, svc: ProcurementService):
     match (args.cmd, getattr(args, "act", None)):
         case ("order", "list"): return svc.list_orders(args.status)
         case ("order", "show"): return svc.get_order(args.order_no)
-        case ("order", "create"): return svc.create_order(args.order_no, **fields_of(args))
+        case ("order", "create"): return svc.create_order(args.order_no or svc.next_order_no(), **fields_of(args))
+        case ("order", "next-no"): return {"order_no": svc.next_order_no()}
         case ("order", "update"): return svc.update_order(args.order_no, **fields_of(args))
         case ("order", "approve"): return svc.approve(args.order_no, args.quote_id)
         case ("order", "receive"): return svc.confirm_receipt(args.order_no)
@@ -116,6 +118,8 @@ def show(result) -> None:
         print(f"[{mark} {result['state']}] {result['message']}")
         if result.get("order"):
             show_order(result["order"])
+    elif isinstance(result, dict) and set(result) == {"order_no"}:
+        print(f"다음 발주번호: {result['order_no']}")
     elif isinstance(result, dict) and "order_no" in result:
         show_order(result)
     elif isinstance(result, list):

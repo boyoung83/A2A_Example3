@@ -89,6 +89,13 @@ class ProcurementService:
                 "SELECT * FROM partner_requests ORDER BY sent_at DESC LIMIT ?", (limit,)))]
 
     # --- 사내 업무 ------------------------------------------------------------
+    def next_order_no(self) -> str:
+        """다음 발주번호 제안: ORDER-<숫자> 중 가장 큰 번호 + 1. 사용자가 고쳐 쓸 수 있다."""
+        with db.session(self.path) as conn:
+            nos = [r[0] for r in conn.execute("SELECT order_no FROM purchase_orders WHERE order_no LIKE 'ORDER-%'")]
+        nums = [int(n[6:]) for n in nos if n[6:].isdigit()]
+        return f"ORDER-{max(nums, default=0) + 1:04d}"
+
     def create_order(self, order_no: str, item: str = "", qty: int = 1, weight_kg: float = 0, origin: str = "",
                      destination: str = "", due_date: str = "", express: bool = False, note: str = "") -> dict:
         order_no = order_no.strip()

@@ -46,7 +46,7 @@ uv run apps\scenarios\run_all.py
 uv run apps\klogistics\agent.py
 uv run apps\kprecision\agent.py
 
-:: 터미널 3 — K정밀웍스 구매 담당자
+:: 터미널 3 — K정밀웍스 구매 담당자 (발주번호를 생략하면 자동 채번, `order next-no`로 미리 보기)
 uv run apps\kprecision\cli.py order create ORDER-2001 --item 기어박스 --qty 10 --weight 120 --from 창원 --due 2026-10-25
 uv run apps\kprecision\cli.py quote request ORDER-2001         :: 도착지가 없어 물류사가 되묻는다 (INPUT_REQUIRED)
 uv run apps\kprecision\cli.py quote input ORDER-2001 --to 평택   :: 같은 Task로 이어 보낸다
@@ -73,7 +73,7 @@ uv run apps\kprecision\web.py     :: http://127.0.0.1:9821  구매 포털
 uv run apps\klogistics\web.py     :: http://127.0.0.1:9811  운영 콘솔
 ```
 
-- 포털: 출발지·도착지는 물류사가 A2A `service-area`로 알려 준 운행 도시 콤보박스(물류사가 꺼져 있으면 마지막 목록). 발주 등록·수정 → 견적 요청 → (되물으면 입력 폼) → 승인 → 출고 요청 → 배송 조회·입고 확인, 물류사 요청 내역과 "다시 보내기", 자동 동기화(60초)
+- 포털: "새 발주"를 누르면 발주번호가 자동 채번(`ORDER-` 뒤 가장 큰 번호 + 1)되어 채워지고, 고쳐 써도 됩니다(중복이면 거부). 출발지·도착지는 물류사가 A2A `service-area`로 알려 준 운행 도시 콤보박스(물류사가 꺼져 있으면 마지막 목록). 발주 등록·수정 → 견적 요청 → (되물으면 입력 폼) → 승인 → 출고 요청 → 배송 조회·입고 확인, 물류사 요청 내역과 "다시 보내기", 자동 동기화(60초)
 - 콘솔: 출고 건 목록·상세, 다음 단계로 진행(메모), 접수된 견적과 만료 처리
 - 주소 뒤에 `#ORDER-2001`·`#SHP-0003`을 붙이면 그 건을 바로 엽니다.
 - 요청 내역의 taskId를 누르면 관제 화면(`?snapshot=1&select=…`)으로 갑니다(허브가 켜져 있을 때).

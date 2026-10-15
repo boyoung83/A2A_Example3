@@ -67,6 +67,11 @@ async def cities():
     return await service.service_area()
 
 
+@app.get("/api/next-order-no")
+async def next_order_no():
+    return {"order_no": service.next_order_no()}
+
+
 @app.get("/api/orders")
 async def orders(status: str | None = None):
     return service.list_orders(status)

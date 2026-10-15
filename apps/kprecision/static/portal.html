@@ -141,7 +141,7 @@ async function refresh() {
       <div class="sub">${esc(o.item || '-')} · ${esc(o.origin || '?')} → ${esc(o.destination || '?')} · 납기 ${esc(o.due_date || '-')}</div>
     </div>`).join('') : '<div class="empty">발주가 없습니다.</div>';
   document.querySelectorAll('.o').forEach(el => el.onclick = () => { selected = el.dataset.no; creating = false; location.hash = selected; refresh(); });
-  if (creating) renderForm(); else if (selected) renderDetail(await api(`/api/orders/${encodeURIComponent(selected)}`).catch(() => null));
+  if (creating) { if (!$('#detail [name=order_no]')) await renderForm(); } else if (selected) renderDetail(await api(`/api/orders/${encodeURIComponent(selected)}`).catch(() => null));
   renderRequests(await api('/api/requests?limit=50'));
 }
 
@@ -177,10 +177,12 @@ function readForm(root) {
   return out;
 }
 
-function renderForm() {
-  $('#dTitle').textContent = '새 발주'; $('#dSub').textContent = '';
+async function renderForm() {
+  $('#dTitle').textContent = '새 발주'; $('#dSub').textContent = '자동 채번된 발주번호는 고쳐 써도 됩니다';
   $('#detail').className = 'body';
-  $('#detail').innerHTML = `<div class="grid"><label>발주번호 *<input name="order_no" placeholder="예: ORDER-2001" required></label>
+  const keep = $('#detail [name=order_no]');  // 다시 그릴 때 사용자가 고친 번호를 지키기
+  const no = keep ? keep.value : (await api('/api/next-order-no').catch(() => ({order_no: ''}))).order_no;
+  $('#detail').innerHTML = `<div class="grid"><label>발주번호 *<input name="order_no" value="${esc(no)}" placeholder="예: ORDER-2001" required></label>
     ${fieldInputs({qty:1})}</div>
     <div class="actions"><button class="primary" id="saveNew">발주 등록</button><button id="cancelNew">닫기</button></div>`;
   $('#saveNew').onclick = () => act(async () => {
@@ -189,7 +191,11 @@ function renderForm() {
     const o = await api('/api/orders', {method:'POST', body}); selected = o.order_no; creating = false;
     toast(`${o.order_no} 발주 등록`, 'ok');
   });
-  $('#cancelNew').onclick = () => { creating = false; refresh(); };
+  $('#cancelNew').onclick = () => {
+    creating = false; $('#dTitle').textContent = '발주 상세'; $('#dSub').textContent = '';
+    $('#detail').className = 'empty'; $('#detail').textContent = '왼쪽에서 발주를 고르거나 새 발주를 만드세요.';
+    refresh();
+  };
 }
 
 function renderDetail(o) {
