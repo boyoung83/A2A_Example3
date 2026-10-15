@@ -18,7 +18,8 @@ import uvicorn  # noqa: E402
 from a2a.types.a2a_pb2 import AgentCapabilities, AgentCard, AgentInterface, AgentSkill  # noqa: E402
 
 from common.a2a_io import COMPLETED, Outcome, SkillExecutor, build_a2a_app  # noqa: E402
-from common.auth import KP_CLIENTS, card_security, issued_keys  # noqa: E402
+from common.auth import KP_CLIENTS, card_security  # noqa: E402
+from common.keystore import KeyRegistry  # noqa: E402
 from common.contracts import DeliveryQuery  # noqa: E402
 from kprecision.service import ProcurementService  # noqa: E402
 
@@ -55,10 +56,10 @@ agent_card = AgentCard(
 
 executor = SkillExecutor({SKILL_ROUTE: route_delivery_inquiry}, default_skill=SKILL_ROUTE,
                          text_to_payload=lambda text: {"order_no": text}, name="K정밀웍스", auth_required=True)
-client_keys = issued_keys("KP_CLIENT_KEYS", KP_CLIENTS)
-app = build_a2a_app(agent_card, executor, keys=client_keys)
+keys = KeyRegistry(service.path, "kp", "KP_CLIENT_KEYS", KP_CLIENTS)  # 사내 시스템에 발급한 키 장부(구매 DB)
+app = build_a2a_app(agent_card, executor, verify=keys.verify)
 
 if __name__ == "__main__":
     print(f"K정밀웍스 구매 에이전트 http://{HOST}:{PORT}  물류사={service.partner_url}  DB={service.path}"
-          f"  키 발급 사내 시스템={list(client_keys)}  물류사 키={'있음' if service.api_key else '없음'}")
+          f"  유효 키={[(k['key_id'], k['partner']) for k in keys.list() if k['state'] in ('ACTIVE', 'EXPIRING')]}  물류사 키={'있음' if service.api_key else '없음'}")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

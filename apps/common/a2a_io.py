@@ -90,6 +90,8 @@ class SkillExecutor(AgentExecutor):
         await updater.update_status(TaskState.TASK_STATE_WORKING)
 
         skill, payload = self._parse(context)
+        if self.auth_required:
+            print(f"[{self.name}] 인증 통과: {caller} → {skill}")
         handler = self.handlers.get(skill or "")
         if handler is None:
             outcome = Outcome(REJECTED, {"reason": "unknown_skill", "detail": f"지원하지 않는 스킬: {skill}"},
@@ -244,10 +246,11 @@ async def call_text(url: str, text: str, timeout: float = 15.0, api_key: str = "
     return await _send(card, message, api_key if requires_api_key(card) else "", timeout)
 
 
-def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor, keys: dict[str, str] | None = None):
+def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor, verify: Callable[[str], str | None] | None = None):
     """Agent Card + JSON-RPC 경로를 가진 FastAPI 앱. 실행은 uvicorn.run(app, host=..., port=...)로 한다
     (obs_run.py가 키워드 인자에서 주소를 읽는다).
-    keys(파트너 이름 → 키)를 주면 X-Partner-Key로 호출자를 확인한다. Agent Card 조회는 인증 없이 열어 둔다."""
+    verify(키 → 파트너 이름 또는 None, 보통 KeyRegistry.verify)를 주면 X-Partner-Key로 호출자를 확인한다.
+    Agent Card 조회는 인증 없이 열어 둔다."""
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.routes.agent_card_routes import create_agent_card_routes
     from a2a.server.routes.fastapi_routes import add_a2a_routes_to_fastapi
@@ -257,9 +260,9 @@ def build_a2a_app(agent_card: AgentCard, executor: AgentExecutor, keys: dict[str
 
     from common.auth import ApiKeyContextBuilder, AuthRequestHandler
 
-    handler_cls = AuthRequestHandler if keys is not None else DefaultRequestHandler
+    handler_cls = AuthRequestHandler if verify is not None else DefaultRequestHandler
     handler = handler_cls(agent_executor=executor, task_store=InMemoryTaskStore(), agent_card=agent_card)
-    builder = ApiKeyContextBuilder(keys) if keys is not None else None
+    builder = ApiKeyContextBuilder(verify) if verify is not None else None
     app = FastAPI()
     add_a2a_routes_to_fastapi(
         app,

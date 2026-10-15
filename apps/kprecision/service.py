@@ -57,13 +57,17 @@ class ProcurementService:
                  api_key: str | None = None) -> None:
         self.path = Path(path or os.getenv("KP_DB") or DEFAULT_DB)
         self.partner_url = (partner_url or os.getenv("KL_AGENT_URL") or "http://127.0.0.1:9810").rstrip("/")
-        # K-Logistics가 K정밀웍스에 발급한 파트너 키 (환경변수 KL_API_KEY, 없으면 로컬 개발용 secrets.json)
-        self.api_key = api_key if api_key is not None else client_key("KL_API_KEY", KL_PARTNERS, SHIPPER)
+        self._api_key = api_key  # 테스트용 고정 키. None이면 요청마다 다시 읽는다(교체된 키를 재시작 없이 반영)
         self.timeout = float(os.getenv("KP_PARTNER_TIMEOUT", "15"))
         self._area: dict | None = None  # 물류사 운행 도시 — 마지막으로 받은 것
         db.init(self.path, SCHEMA)
         if os.getenv("KP_SEED", "1") != "0":
             self._seed()
+
+    @property
+    def api_key(self) -> str:
+        """K-Logistics가 K정밀웍스에 발급한 파트너 키 (환경변수 KL_API_KEY, 없으면 로컬 개발용 secrets.json)."""
+        return self._api_key if self._api_key is not None else client_key("KL_API_KEY", KL_PARTNERS, SHIPPER)
 
     # --- 조회 -----------------------------------------------------------------
     def list_orders(self, status: str | None = None) -> list[dict]:

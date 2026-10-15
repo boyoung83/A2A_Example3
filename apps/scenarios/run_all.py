@@ -39,7 +39,7 @@ ENV.update(PYTHONIOENCODING="utf-8", KL_DB=str(TMP / "kl.db"), KP_DB=str(TMP / "
            KP_CLIENT_KEYS="사내 시스템=test-internal-key")
 KP_KEY, OTHER_KEY, INTERNAL_KEY = "test-kp-key", "test-ke-key", "test-internal-key"
 os.environ.update({k: ENV[k] for k in ("KL_DB", "KP_DB", "KL_AGENT_URL", "KL_FAIL_ORDERS", "KP_PARTNER_TIMEOUT",
-                                       "A2A_SECRETS_FILE", "KL_API_KEY")})
+                                       "A2A_SECRETS_FILE", "KL_API_KEY", "KL_PARTNER_KEYS")})
 
 from klogistics.service import LogisticsService  # noqa: E402
 from kprecision.service import ProcurementService  # noqa: E402
@@ -270,6 +270,40 @@ async def main() -> int:
               f"남이 Task를 봤다: {results}")
         return f"tasks/get — {results}"
 
+    async def ask_as(key: str) -> str:
+        r = await call_skill(KL_URL, "check-delivery", {"order_no": "ORDER-1001"}, api_key=key)
+        return r.state
+
+    async def k1():
+        from common.auth import KL_PARTNERS
+        from common.keystore import KeyRegistry
+        reg = KeyRegistry(TMP / "kl.db", "kl", "KL_PARTNER_KEYS", KL_PARTNERS)  # 물류 에이전트와 같은 장부
+        new_id, new_key, old = reg.rotate("K정밀웍스", grace_hours=1)
+        check(await ask_as(KP_KEY) == "COMPLETED" and await ask_as(new_key) == "COMPLETED", "유예기간 중 두 키가 다 통해야 한다")
+        states = {r["key_id"]: r["state"] for r in reg.list("K정밀웍스")}
+        check(states[old[0]] == "EXPIRING" and states[new_id] == "ACTIVE", str(states))
+        k1.new_key, k1.old, k1.reg = new_key, old, reg
+        return f"교체 {old[0]} → {new_id}: 유예기간 1시간 동안 두 키 모두 유효 (에이전트 재시작 없음)"
+
+    async def k2():
+        from common.auth import KL_PARTNERS, deliver
+        k1.reg.revoke(k1.old[0], reason="교체 완료")
+        check(await ask_as(KP_KEY) == "REJECTED", "폐기한 키가 아직 통한다")
+        os.environ.pop("KL_API_KEY")                      # 이제 K정밀웍스는 키 파일에서 키를 읽는다
+        deliver(KL_PARTNERS, "K정밀웍스", k1.new_key)      # 새 키 전달 (keys.py --deliver 와 같음)
+        r = await kp.track("ORDER-1001")
+        check(r["state"] == "COMPLETED", f"전달한 새 키로 동작하지 않는다: {r['message']}")
+        return "옛 키 폐기 → 즉시 거절 / 새 키 전달 → 구매 시스템 재시작 없이 새 키 사용"
+
+    async def k3():
+        k1.reg.revoke(partner="K전자", reason="계약 종료")
+        check(await ask_as(OTHER_KEY) == "REJECTED", "폐기한 파트너 키가 통한다")
+        _, expired = k1.reg.issue("K전자", expires_hours=-1)
+        check(await ask_as(expired) == "REJECTED", "만료된 키가 통한다")
+        _, fresh = k1.reg.issue("K전자")
+        check(await ask_as(fresh) == "COMPLETED", "새로 발급한 키가 통하지 않는다")
+        return "파트너 키 전부 폐기·만료 키 거절·재발급 즉시 사용"
+
     async def e9_e10():
         check("A2A_OBS_URL" not in ENV, "관제 허브 주소가 설정돼 있다")
         return "웹 화면(9811·9821)·관제 허브(9900)를 쓰지 않고 위 시나리오 완료"
@@ -291,6 +325,9 @@ async def main() -> int:
         await scenario("A2", "인증 — 구매 시스템의 키가 틀리거나 없음", a2)
         await scenario("A3", "권한 — 다른 화주의 배송·출고·견적 차단", a3)
         await scenario("A4", "권한 — 다른 화주·무인증의 Task 조회 차단", a4)
+        await scenario("K1", "키 교체 — 유예기간 동안 두 키 유효", k1)
+        await scenario("K2", "키 교체 — 옛 키 폐기, 새 키 전달", k2)
+        await scenario("K3", "키 폐기·만료·재발급", k3)
         await scenario("E9", "웹·관제 없이 연동", e9_e10)
     finally:
         for name in list(procs):

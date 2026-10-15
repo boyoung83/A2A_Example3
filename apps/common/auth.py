@@ -11,14 +11,14 @@
   - 상대에게 받은 키를 call_skill(..., api_key=...)로 보낸다.
 
 키 보관 (실제 운영처럼 코드에 키를 적지 않는다)
-  1) 환경변수가 있으면 그것을 쓴다
-       서버: KL_PARTNER_KEYS / KP_CLIENT_KEYS  = "파트너이름=키,파트너이름=키"
-       클라이언트: KL_API_KEY(K정밀웍스가 물류사에 보낼 키) / KP_API_KEY(사내 시스템이 구매 에이전트에 보낼 키)
-  2) 없으면 로컬 개발용 apps/data/secrets.json 을 쓴다(처음 실행 때 무작위 키로 만든다, git에 올리지 않는다).
-     이 파일 하나를 두 회사가 같이 읽는 것은 "키를 발급해 전달했다"를 한 PC에서 흉내 낸 것이다.
+  서버(발급한 쪽): 회사 DB의 키 장부(keystore.py) — 해시만 저장, 요청마다 확인, 교체·폐기 즉시 반영.
+       장부가 처음 비어 있으면 KL_PARTNER_KEYS / KP_CLIENT_KEYS("이름=키,…") 또는 secrets.json에서 들여온다.
+  클라이언트(받은 쪽): KL_API_KEY / KP_API_KEY 환경변수, 없으면 로컬 개발용 apps/data/secrets.json.
+       요청할 때마다 다시 읽으므로, 교체한 키를 전달(deliver)하면 재시작 없이 새 키를 쓴다.
+  secrets.json(처음 실행 때 무작위 키로 생성, git 제외)을 두 회사가 같이 읽는 것은
+  "키를 발급해 전달했다"를 한 PC에서 흉내 낸 것이다.
 """
 
-import hmac
 import json
 import os
 import secrets
@@ -71,11 +71,12 @@ def _parse_env(value: str) -> dict[str, str]:
     return {name.strip(): key.strip() for name, key in pairs if name.strip() and key.strip()}
 
 
-def issued_keys(env_var: str, section: str) -> dict[str, str]:
-    """서버가 받아 줄 키 목록: 파트너 이름 → 키."""
-    if os.getenv(env_var):
-        return _parse_env(os.environ[env_var])
-    return load_secrets()[section]
+def deliver(section: str, name: str, key: str) -> Path:
+    """(개발용) 새로 발급한 키를 받는 쪽 키 파일에 넣어 '전달'한다. 실제로는 안전한 별도 경로로 건넨다."""
+    data = load_secrets()
+    data.setdefault(section, {})[name] = key
+    SECRETS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return SECRETS_FILE
 
 
 def client_key(env_var: str, section: str, name: str) -> str:
@@ -101,18 +102,16 @@ class PartnerUser(User):
 
 
 class ApiKeyContextBuilder(DefaultServerCallContextBuilder):
-    """요청 헤더의 API Key를 발급 목록과 비교해 ServerCallContext.user를 채운다(Ch18)."""
+    """요청 헤더의 API Key를 키 장부로 확인해 ServerCallContext.user를 채운다(Ch18).
+    verify: 키 → 파트너 이름(유효) 또는 None. 장부를 요청마다 보므로 교체·폐기가 바로 반영된다."""
 
-    def __init__(self, keys: dict[str, str]) -> None:
+    def __init__(self, verify) -> None:
         super().__init__()
-        self.keys = keys
+        self.verify = verify
 
     def build_user(self, request: Request) -> User:
-        presented = request.headers.get(API_KEY_HEADER, "")
-        for name, key in self.keys.items():
-            if presented and hmac.compare_digest(presented.encode(), key.encode()):  # 시간차 공격 방지
-                return PartnerUser(name)
-        return UnauthenticatedUser()
+        name = self.verify(request.headers.get(API_KEY_HEADER, ""))
+        return PartnerUser(name) if name else UnauthenticatedUser()
 
 
 class AuthRequestHandler(DefaultRequestHandler):

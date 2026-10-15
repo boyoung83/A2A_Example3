@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import uvicorn  # noqa: E402
 from a2a.types.a2a_pb2 import AgentCapabilities, AgentCard, AgentInterface, AgentSkill  # noqa: E402
 
-from common.auth import KL_PARTNERS, card_security, issued_keys  # noqa: E402
+from common.auth import KL_PARTNERS, card_security  # noqa: E402
+from common.keystore import KeyRegistry  # noqa: E402
 from common.a2a_io import COMPLETED, INPUT_REQUIRED, REJECTED, Outcome, SkillExecutor, build_a2a_app  # noqa: E402
 from common.contracts import (  # noqa: E402
     SKILL_CANCEL_SHIPMENT, SKILL_CHECK_DELIVERY, SKILL_CREATE_SHIPMENT, SKILL_QUOTE, SKILL_SERVICE_AREA, CancelRequest,
@@ -87,9 +88,9 @@ agent_card = AgentCard(
 service = LogisticsService()
 executor = SkillExecutor(build_handlers(service), default_skill=SKILL_CHECK_DELIVERY,
                          text_to_payload=lambda text: {"order_no": text}, name="K-Logistics", auth_required=True)
-partner_keys = issued_keys("KL_PARTNER_KEYS", KL_PARTNERS)
-app = build_a2a_app(agent_card, executor, keys=partner_keys)
+keys = KeyRegistry(service.path, "kl", "KL_PARTNER_KEYS", KL_PARTNERS)  # 화주에게 발급한 키 장부(물류사 DB)
+app = build_a2a_app(agent_card, executor, verify=keys.verify)
 
 if __name__ == "__main__":
-    print(f"K-Logistics 물류 에이전트 http://{HOST}:{PORT}  DB={service.path}  키 발급 화주={list(partner_keys)}")
+    print(f"K-Logistics 물류 에이전트 http://{HOST}:{PORT}  DB={service.path}  유효 키={[(k['key_id'], k['partner']) for k in keys.list() if k['state'] in ('ACTIVE', 'EXPIRING')]}")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")

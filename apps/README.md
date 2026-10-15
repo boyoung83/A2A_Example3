@@ -6,6 +6,7 @@
 apps/
 ├── common/
 │   ├── auth.py        # 파트너 API Key 인증(Ch18) — 키 확인·카드 표시·Task 조회 차단
+│   ├── keystore.py    # 발급한 키 장부(해시 저장, 교체·폐기 즉시 반영)
 │   ├── contracts.py   # 스킬별 요청·응답 계약 (pydantic)
 │   ├── a2a_io.py      # 서버: SkillExecutor(스킬 → 업무 함수 → Task 상태) / 클라이언트: call_skill
 │   └── db.py          # 회사별 SQLite (WAL)
@@ -20,6 +21,7 @@ apps/
 │   ├── agent.py       # A2A 구매 에이전트 9820 (외부 배송 문의 위임, 기존 call_router 호환)
 │   ├── cli.py         # 구매 CLI
 │   └── web.py         # 구매 포털 9821 (선택) + static/portal.html
+├── keys.py            # 파트너 API Key 발급·교체·폐기 도구
 ├── scenarios/
 │   ├── run_all.py     # 시나리오 S0~S3, E1~E9 자동 판정 (웹·관제 없이)
 │   └── bad_partner.py # E6 계약 위반 실험용 물류사
@@ -38,7 +40,7 @@ uv sync
 uv run apps\scenarios\run_all.py
 ```
 
-에이전트를 임시 포트(9860~9862)와 임시 DB로 직접 띄워 시나리오 17개(인증·권한 4개 포함)를 돌리고 `17/17 PASS`를 출력합니다. 이미 띄워 둔 서버와 겹치지 않습니다.
+에이전트를 임시 포트(9860~9862)와 임시 DB로 직접 띄워 시나리오 20개(인증·권한 4개, 키 교체·폐기 3개 포함)를 돌리고 `20/20 PASS`를 출력합니다. 이미 띄워 둔 서버와 겹치지 않습니다.
 
 ## 손으로 해 보기 — 웹 화면 없이
 
@@ -100,7 +102,7 @@ uv run obs\obs_run.py apps\kprecision\agent.py
 | K정밀웍스 → K-Logistics (9810) | `KL_PARTNER_KEYS` (화주 이름=키, …) | `KL_API_KEY` |
 | 사내 시스템 → K정밀웍스 구매 에이전트 (9820) | `KP_CLIENT_KEYS` | `KP_API_KEY` |
 
-- 키가 없거나 틀리면 일을 시작하기 전에 **REJECTED** `{"reason": "unauthenticated"}`. `tasks/get`·`cancel`·`subscribe`도 인증 없이는 "없는 Task".
+- 키가 없거나 틀리거나 폐기·만료됐으면 일을 시작하기 전에 **REJECTED** `{"reason": "unauthenticated"}`. `tasks/get`·`cancel`·`subscribe`도 인증 없이는 "없는 Task".
 - **권한**: 키로 확인된 화주는 자기 출고 건·견적만 조회·사용·취소합니다. 남의 주문은 "결과 없음", 남의 견적·출고 건은 "없는 건"으로 답해 존재 여부도 알려 주지 않습니다. 화주 이름은 요청 본문이 아니라 키로 정하고, 업무키도 화주별로 따로 셉니다. Task도 화주별로 나뉘어 남의 Task를 조회할 수 없습니다.
 - 구매 에이전트는 받은 키를 물류사로 넘기지 않고 자기 키(`KL_API_KEY`)를 씁니다. 키는 상대 카드가 요구할 때만 보냅니다.
 - 환경변수가 없으면 로컬 개발용 `apps/data/secrets.json`을 씁니다(처음 실행 때 무작위 키로 생성, git 제외). 한 PC에서 "발급한 키를 전달했다"를 흉내 낸 것이므로, 실제로 회사를 나눠 띄울 때는 환경변수로 넣습니다.
@@ -115,6 +117,22 @@ uv run apps\klogistics\agent.py
 set KL_API_KEY=kl-여기에-발급한-키
 uv run apps\kprecision\web.py
 ```
+
+### 키 발급·교체·폐기 (`apps/keys.py`)
+
+키를 발급한 회사가 자기 DB의 **키 장부**로 관리합니다. 장부에는 키 원문 대신 SHA-256 해시만 남고, 에이전트는 요청마다 장부를 확인하므로 **재시작 없이 바로 반영**됩니다. 장부는 처음 비어 있을 때만 환경변수·`secrets.json`에서 키를 들여옵니다.
+
+```cmd
+uv run apps\keys.py kl list                                   :: K-Logistics가 화주에게 발급한 키 (kp: K정밀웍스가 사내 시스템에 발급한 키)
+uv run apps\keys.py kl issue K전자 --expires-hours 720         :: 새 화주에게 30일짜리 키 발급
+uv run apps\keys.py kl rotate K정밀웍스 --grace-hours 24 --deliver   :: 교체: 새 키 발급, 옛 키는 24시간 뒤 만료
+uv run apps\keys.py kl revoke KLK-001 --reason "교체 완료"       :: 키 하나 즉시 폐기
+uv run apps\keys.py kl revoke --partner K전자 --reason "계약 종료"  :: 그 화주의 키 전부 폐기
+```
+
+- 상태: 유효 · 교체 유예(유예기간 동안 옛 키도 통함) · 만료 · 폐기. `list`에 최근 사용 시각이 나와 옛 키가 아직 쓰이는지 볼 수 있습니다.
+- 키 원문은 발급할 때 한 번만 출력됩니다. `--deliver`는 로컬 개발용으로 받는 쪽 키 파일(`secrets.json`)에 넣어 주며, K정밀웍스는 요청마다 키를 다시 읽어 바로 새 키를 씁니다(`KL_API_KEY` 환경변수가 있으면 그쪽이 우선).
+- 에이전트 콘솔에 `인증 통과: K정밀웍스 → quote` / `인증되지 않은 요청 거부`가 찍힙니다.
 
 ## 설정 (환경변수)
 
