@@ -222,7 +222,7 @@ class LogisticsService:
             for sid, order_no, o, d, status, eta, events in seed:
                 at = "2026-09-01T09:00:00+09:00"
                 conn.execute("INSERT INTO shipments VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                             (sid, f"seed-{sid}", f"seed-{sid}", order_no, "K정밀웍스", "", o, d, status, eta, at, at))
+                             (sid, None, None, order_no, "K정밀웍스", "", o, d, status, eta, at, at))  # 견적 없이 등록된 기존 건
                 for st, memo in events:
                     conn.execute("INSERT INTO shipment_events(shipment_id,status,memo,at) VALUES(?,?,?,?)",
                                  (sid, st, memo, at))
