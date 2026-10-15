@@ -5,6 +5,8 @@
 !/pyproject.toml
 !/uv.lock
 !/.python-version
+!/README.md
+!/docs/
 
 __pycache__/
 *.pyc
